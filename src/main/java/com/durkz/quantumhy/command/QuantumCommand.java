@@ -5,8 +5,9 @@ import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.view.EntityCullSystem;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
-import com.hypixel.hytale.server.core.command.system.arguments.system.OptionalArg;
+import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
 import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
+import com.hypixel.hytale.server.core.command.system.basecommands.AbstractCommandCollection;
 import com.hypixel.hytale.server.core.command.system.basecommands.CommandBase;
 import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
@@ -16,39 +17,80 @@ import com.hypixel.hytale.server.core.universe.Universe;
 import java.util.Collection;
 import java.util.Locale;
 
-/** {@code /q} (alias /quantumhy). Read-only status and diagnostics for what QuantumHy is doing right now. */
-public class QuantumCommand extends CommandBase {
-
-    private final QuantumHyConfig config;
-    private final OptionalArg<String> subArg;
-    private final OptionalArg<String> argArg;
+/** {@code /q status} (alias /quantumhy). Read-only status and diagnostics for what QuantumHy is doing right now. */
+public class QuantumCommand extends AbstractCommandCollection {
 
     public QuantumCommand(QuantumHyConfig config) {
         super("quantumhy", "QuantumHy status and diagnostics");
         addAliases("q", "qhy");
-        this.config = config;
-        setAllowsExtraArguments(true);
-        this.subArg = withOptionalArg("sub", "status | help | perf", ArgTypes.STRING);
-        this.argArg = withOptionalArg("arg", "on | off (for perf)", ArgTypes.STRING);
+        addSubCommand(new StatusSubCommand(config));
+        addSubCommand(new HelpSubCommand());
+        addSubCommand(new PerfSubCommand());
     }
 
     @Override
-    protected void executeSync(CommandContext ctx) {
-        String sub = subArg.provided(ctx) ? ctx.get(subArg) : null;
-        String arg = argArg.provided(ctx) ? ctx.get(argArg) : null;
-        if (sub == null || sub.isBlank() || sub.equalsIgnoreCase("status")) {
-            status(ctx);
-        } else if (sub.equalsIgnoreCase("help")) {
-            help(ctx);
-        } else if (sub.equalsIgnoreCase("perf")) {
-            perf(ctx, arg);
-        } else {
-            send(ctx, "Unknown subcommand '" + sub + "'. Try /q status.", "#FF5555");
+    protected boolean canGeneratePermission() {
+        return false;
+    }
+
+    private static final class StatusSubCommand extends CommandBase {
+
+        private final QuantumHyConfig config;
+
+        StatusSubCommand(QuantumHyConfig config) {
+            super("status", "Show QuantumHy status");
+            this.config = config;
+        }
+
+        @Override
+        protected boolean canGeneratePermission() {
+            return false;
+        }
+
+        @Override
+        protected void executeSync(CommandContext ctx) {
+            status(ctx, config);
         }
     }
 
-    /** Toggles the local-only dev performance meter, if it is present in this build (reflection: see devperf). */
-    private void perf(CommandContext ctx, String arg) {
+    private static final class HelpSubCommand extends CommandBase {
+
+        HelpSubCommand() {
+            super("help", "List QuantumHy commands");
+        }
+
+        @Override
+        protected boolean canGeneratePermission() {
+            return false;
+        }
+
+        @Override
+        protected void executeSync(CommandContext ctx) {
+            help(ctx);
+        }
+    }
+
+    private static final class PerfSubCommand extends CommandBase {
+
+        private final RequiredArg<String> actionArg;
+
+        PerfSubCommand() {
+            super("perf", "Toggle local dev performance meter");
+            this.actionArg = withRequiredArg("action", "on | off", ArgTypes.STRING);
+        }
+
+        @Override
+        protected boolean canGeneratePermission() {
+            return false;
+        }
+
+        @Override
+        protected void executeSync(CommandContext ctx) {
+            perf(ctx, ctx.get(actionArg));
+        }
+    }
+
+    private static void perf(CommandContext ctx, String arg) {
         boolean on = "on".equalsIgnoreCase(arg);
         boolean off = "off".equalsIgnoreCase(arg);
         if (!on && !off) {
@@ -66,7 +108,7 @@ public class QuantumCommand extends CommandBase {
         }
     }
 
-    private void status(CommandContext ctx) {
+    private static void status(CommandContext ctx, QuantumHyConfig config) {
         send(ctx, "QuantumHy status", "#55FFFF");
         send(ctx, config.enabled ? "enabled" : "DISABLED via config", config.enabled ? "#55FF55" : "#FF5555");
 
@@ -119,7 +161,7 @@ public class QuantumCommand extends CommandBase {
         }
     }
 
-    private void help(CommandContext ctx) {
+    private static void help(CommandContext ctx) {
         send(ctx, "QuantumHy commands", "#55FFFF");
         send(ctx, "/q status - what QuantumHy is doing right now", "#AAAAAA");
         send(ctx, "/q perf on|off - local dev server performance log (if present in this build)", "#AAAAAA");

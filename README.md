@@ -53,7 +53,7 @@ Fair warning: this isn't a lab benchmark. The two runs aren't the exact same pat
 recordings are at different frame rates, so I leaned on the overlay numbers, not the video files.
 Realistic gain is somewhere around +30% to +45%, with bigger spikes in crowded areas.
 
-Mod on:
+Mod on: https://www.youtube.com/watch?v=gjRcmj12A8A
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=gjRcmj12A8A">
@@ -61,7 +61,7 @@ Mod on:
   </a>
 </p>
 
-Mod off:
+Mod off: https://www.youtube.com/watch?v=I8I05ioJG7g
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=I8I05ioJG7g">

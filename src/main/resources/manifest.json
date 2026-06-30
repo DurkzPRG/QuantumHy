@@ -1,0 +1,19 @@
+{
+    "Group": "durkz",
+    "Name": "QuantumHy",
+    "Version": "0.1.0",
+    "Description": "FPS-focused performance mod for Hytale. Adaptive per-player client view radius: trims render load in crowded areas and restores it in the open. Coexists with LeanCore.",
+    "Authors": [
+        {
+            "Name": "Durkz"
+        }
+    ],
+    "Website": "https://github.com/DurkzPRG/QuantumHy",
+    "ServerVersion": ">=0.5.6",
+    "OptionalDependencies": {
+        "durkz:LeanCore": "*"
+    },
+    "DisabledByDefault": false,
+    "Main": "com.durkz.quantumhy.QuantumHyPlugin",
+    "IncludesAssetPack": true
+}

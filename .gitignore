@@ -1,0 +1,22 @@
+# Build output
+build/
+out/
+bin/
+
+# Gradle
+.gradle/
+
+# Server run dir (created by build.gradle)
+run/
+
+# Local third-party jars (HytaleServer.jar is resolved from the install)
+libs/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

@@ -2,6 +2,7 @@ package com.durkz.quantumhy.command;
 
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
+import com.durkz.quantumhy.view.EntityCullSystem;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.command.system.arguments.system.OptionalArg;
@@ -80,6 +81,11 @@ public class QuantumCommand extends CommandBase {
                 "density: scan=%dch low=%.1f/ch high=%.1f/ch smoothing=%.2f",
                 config.densityScanChunkRadius, config.densityLowPerChunk,
                 config.densityHighPerChunk, config.densitySmoothing), "#AAAAAA");
+        send(ctx, String.format(Locale.ROOT,
+                "entity cull: vertical=%s cap=%s culled(v/cap)=%d/%d",
+                config.maxEntityVerticalDistance > 0 ? config.maxEntityVerticalDistance + "b" : "off",
+                config.maxVisibleEntitiesPerPlayer > 0 ? String.valueOf(config.maxVisibleEntitiesPerPlayer) : "off",
+                EntityCullSystem.VERTICAL_CULLED.sum(), EntityCullSystem.CAP_CULLED.sum()), "#AAAAAA");
         send(ctx, String.format(Locale.ROOT,
                 "streaming: smooth=%s maxChunks/s=%s maxChunks/tick=%s",
                 config.smoothChunkStreaming,

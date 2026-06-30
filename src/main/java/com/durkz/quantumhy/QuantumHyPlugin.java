@@ -3,7 +3,9 @@ package com.durkz.quantumhy;
 import com.durkz.quantumhy.command.QuantumCommand;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.runtime.FpsRuntime;
+import com.durkz.quantumhy.view.EntityCullSystem;
 import com.hypixel.hytale.server.core.event.events.ShutdownEvent;
+import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
 import org.checkerframework.checker.nullness.compatqual.NonNullDecl;
@@ -34,6 +36,11 @@ public class QuantumHyPlugin extends JavaPlugin {
 
         runtime = new FpsRuntime(this, config);
 
+        if (config.maxEntityVerticalDistance > 0 || config.maxVisibleEntitiesPerPlayer > 0) {
+            getEntityStoreRegistry().registerSystem(
+                    new EntityCullSystem(EntityTrackerSystems.EntityViewer.getComponentType(), config));
+        }
+
         getEventRegistry().registerGlobal(ShutdownEvent.class, e -> {
             if (runtime != null) {
                 runtime.shutdown();
@@ -43,13 +50,16 @@ public class QuantumHyPlugin extends JavaPlugin {
         String configDump = String.format(java.util.Locale.ROOT,
                 "QuantumHy %s setup. config: verboseLog=%s tickInterval=%ds initialDelay=%ds hardCap=%d min=%d "
                         + "max=%d scan=%d densityLow=%.1f/ch densityHigh=%.1f/ch smoothing=%.2f adaptEntity=%s "
-                        + "minEntityBlocks=%d entityLod=%.2fx minDelta=%d streamGrace=%s backlog>=%d "
-                        + "smoothStreaming=%s maxChunks/s=%d maxChunks/tick=%d leanCoreTakeover=%s yield=%s",
+                        + "minEntityBlocks=%d entityLod=%.2fx vCull=%s entityCap=%s minDelta=%d streamGrace=%s "
+                        + "backlog>=%d smoothStreaming=%s maxChunks/s=%d maxChunks/tick=%d leanCoreTakeover=%s yield=%s",
                 getManifest().getVersion(), config.verboseLog, config.tickIntervalSeconds,
                 config.initialDelaySeconds, config.targetClientViewRadius, config.minClientViewRadius,
                 config.maxClientViewRadius, config.densityScanChunkRadius, config.densityLowPerChunk,
                 config.densityHighPerChunk, config.densitySmoothing, config.adaptEntityRadius,
-                config.minEntityViewBlocks, config.entityLodAggressiveness, config.minViewRadiusDelta,
+                config.minEntityViewBlocks, config.entityLodAggressiveness,
+                config.maxEntityVerticalDistance > 0 ? config.maxEntityVerticalDistance + "b" : "off",
+                config.maxVisibleEntitiesPerPlayer > 0 ? String.valueOf(config.maxVisibleEntitiesPerPlayer) : "off",
+                config.minViewRadiusDelta,
                 config.respectStreamingGrace, config.streamingBacklogThreshold, config.smoothChunkStreaming,
                 config.maxChunksPerSecond, config.maxChunksPerTick, config.leanCoreTakeover,
                 config.yieldToLeanCoreViewRadius);

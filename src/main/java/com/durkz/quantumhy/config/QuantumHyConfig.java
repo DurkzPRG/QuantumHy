@@ -83,6 +83,23 @@ public class QuantumHyConfig {
      */
     public double entityLodAggressiveness = 1.5D;
 
+    /**
+     * Stop streaming entities that are too far above or below the player, in blocks. The engine sends
+     * every entity inside the entity radius as a plain sphere with no line of sight, so mobs deep in
+     * caves under you (or far overhead) still get sent and drawn through the terrain. This drops them.
+     * {@code 0} turns the vertical cut off. 40 keeps normal surface play untouched while cutting the
+     * cave and ceiling crowds that the client would otherwise render for nothing.
+     */
+    public int maxEntityVerticalDistance = 40;
+
+    /**
+     * Hard ceiling on how many entities the server streams to one client at once. In a crowd past
+     * this, only the nearest entities are sent and the rest are held back until they thin out. Other
+     * players are never trimmed. {@code 0} turns the cap off (the adaptive entity radius and LOD still
+     * apply). Set it to protect FPS in dense mob pile-ups on lower-end machines.
+     */
+    public int maxVisibleEntitiesPerPlayer = 0;
+
     /** Minimum change (chunks) before an update is sent, to avoid churn. */
     public int minViewRadiusDelta = 2;
 
@@ -193,6 +210,12 @@ public class QuantumHyConfig {
         }
         if (entityLodAggressiveness <= 0) {
             entityLodAggressiveness = 1.0D;
+        }
+        if (maxEntityVerticalDistance < 0) {
+            maxEntityVerticalDistance = 0;
+        }
+        if (maxVisibleEntitiesPerPlayer < 0) {
+            maxVisibleEntitiesPerPlayer = 0;
         }
         if (minViewRadiusDelta < 1) {
             minViewRadiusDelta = 1;

@@ -36,6 +36,31 @@ Out of the box there's no hard cap, so you lose nothing in the open and only get
 crowded. If you'd rather trade some view distance for FPS everywhere, set `targetClientViewRadius`
 above 0.
 
+It also smooths how fast chunks stream to you, so moving into fresh terrain arrives spread out
+instead of in one burst that makes the client hitch. That's the `smoothChunkStreaming` keys below.
+
+## Performance
+
+I ran the same kind of scene with the mod off and on (solo, lots of birds and mobs on screen) and
+read the in-game FPS overlay:
+
+- Average FPS: about 84 off, about 113 on. Roughly +34%.
+- Median FPS: 74 off, 106 on. Roughly +44%, and the median is closer to how it actually feels.
+- In the heavy moments, with a swarm of entities on screen, off dropped to 50-60 FPS while on held
+  around 90-105. That's about +55% to +75% right where you need it.
+
+Fair warning: this isn't a lab benchmark. The two runs aren't the exact same path or length, and the
+recordings are at different frame rates, so I leaned on the overlay numbers, not the video files.
+Realistic gain is somewhere around +30% to +45%, with bigger spikes in crowded areas.
+
+Mod on:
+
+[![QuantumHy mod on](https://img.youtube.com/vi/gjRcmj12A8A/hqdefault.jpg)](https://www.youtube.com/watch?v=gjRcmj12A8A)
+
+Mod off:
+
+[![QuantumHy mod off](https://img.youtube.com/vi/I8I05ioJG7g/hqdefault.jpg)](https://www.youtube.com/watch?v=I8I05ioJG7g)
+
 ## Config
 
 Lives in `QuantumHy.json` in the plugin data folder, created on first run.
@@ -59,6 +84,9 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `minViewRadiusDelta` | `2` | Don't bother changing the view for tiny differences. |
 | `respectStreamingGrace` | `true` | Don't shrink while you're still loading chunks. |
 | `streamingBacklogThreshold` | `8` | How many loading chunks counts as "still streaming". |
+| `smoothChunkStreaming` | `true` | Spread chunk streaming out so moving into new terrain doesn't hitch. |
+| `maxChunksPerSecond` | `128` | Cap on chunks streamed per second to a managed client. `0` keeps the engine default. |
+| `maxChunksPerTick` | `2` | Cap on chunks streamed per tick. This is the real anti-hitch lever (engine default is 4). `0` keeps the default. |
 | `leanCoreTakeover` | `true` | If LeanCore is installed, take the view radius over from it (see below). |
 | `yieldToLeanCoreViewRadius` | `false` | The opposite: leave the view radius to LeanCore (see below). |
 
@@ -78,6 +106,12 @@ Two knobs if you want it different:
   to leave LeanCore alone, but then both can fight over it.
 - `yieldToLeanCoreViewRadius` (default `false`): the opposite. QuantumHy stays out of the view
   radius entirely and lets LeanCore keep it.
+
+## Commands
+
+- `/q status` (alias `/quantumhy`, `/qhy`): shows what QuantumHy is doing right now, the active
+  levers, and per-player chunk load.
+- `/q help`: lists the commands.
 
 ## Build
 

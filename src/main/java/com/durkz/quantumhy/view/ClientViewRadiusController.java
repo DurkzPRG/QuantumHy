@@ -54,6 +54,7 @@ public final class ClientViewRadiusController {
             int entCurrent,
             int entTarget,
             boolean entApplied,
+            int lodExcluded,
             String reason
     ) {
         public boolean applied() {
@@ -69,7 +70,8 @@ public final class ClientViewRadiusController {
                     + (chunkApplied ? "->" + chunkTarget : (chunkHeld ? "!" + chunkTarget : "=" + chunkTarget));
             String ent = entCurrent < 0
                     ? "ent off"
-                    : "ent " + entCurrent + (entApplied ? "->" + entTarget : "=" + entTarget);
+                    : "ent " + entCurrent + (entApplied ? "->" + entTarget : "=" + entTarget)
+                            + (lodExcluded > 0 ? " lod-" + lodExcluded : "");
             return name + " " + entities + "/" + chunks + "ch " + raw + "/ch~"
                     + String.format(Locale.ROOT, "%.1f", smoothed) + " " + chunk + " " + ent + " [" + reason + "]";
         }
@@ -86,7 +88,7 @@ public final class ClientViewRadiusController {
         String name = nameOf(playerRef);
 
         if (config.yieldToLeanCoreViewRadius) {
-            return new Decision(name, -1, 0, 0, -1, -1, false, false, -1, -1, false, "yield");
+            return new Decision(name, -1, 0, 0, -1, -1, false, false, -1, -1, false, 0, "yield");
         }
 
         Ref<EntityStore> ref = playerRef.getReference();
@@ -123,11 +125,13 @@ public final class ClientViewRadiusController {
         int entCurrent = -1;
         int entTarget = -1;
         boolean entApplied = false;
+        int lodExcluded = 0;
         EntityTrackerSystems.EntityViewer viewer = config.adaptEntityRadius
                 ? store.getComponent(ref, EntityTrackerSystems.EntityViewer.getComponentType())
                 : null;
         if (viewer != null && viewer.viewRadiusBlocks > 0) {
             entCurrent = viewer.viewRadiusBlocks;
+            lodExcluded = viewer.lodExcludedCount;
             int entBase = ceiling(state, State.ENTITY, entCurrent);
             entTarget = scale(entBase, Math.min(config.minEntityViewBlocks, entBase), frac);
             if (Math.abs(entTarget - entCurrent) >= ENTITY_BLOCKS_APPLY_STEP) {
@@ -136,8 +140,31 @@ public final class ClientViewRadiusController {
             }
         }
 
+        applyChunkStreamingSmoothing(playerRef);
+
         return new Decision(name, density.entities(), density.chunks(), smoothed,
-                chunkCurrent, chunkTarget, chunkApplied, chunkHeld, entCurrent, entTarget, entApplied, reason);
+                chunkCurrent, chunkTarget, chunkApplied, chunkHeld, entCurrent, entTarget, entApplied,
+                lodExcluded, reason);
+    }
+
+    /**
+     * Caps how fast chunks stream to this client, so a freshly opened radius arrives spread out
+     * instead of as one burst the client has to mesh at once. Idempotent: only writes on change.
+     */
+    private void applyChunkStreamingSmoothing(PlayerRef playerRef) {
+        if (!config.smoothChunkStreaming) {
+            return;
+        }
+        ChunkTracker tracker = playerRef.getChunkTracker();
+        if (tracker == null) {
+            return;
+        }
+        if (config.maxChunksPerSecond > 0 && tracker.getMaxChunksPerSecond() != config.maxChunksPerSecond) {
+            tracker.setMaxChunksPerSecond(config.maxChunksPerSecond);
+        }
+        if (config.maxChunksPerTick > 0 && tracker.getMaxChunksPerTick() != config.maxChunksPerTick) {
+            tracker.setMaxChunksPerTick(config.maxChunksPerTick);
+        }
     }
 
     /** Drop cached state for players no longer online, so the map can't grow without bound. */

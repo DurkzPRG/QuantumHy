@@ -91,6 +91,19 @@ public class QuantumHyConfig {
     public int streamingBacklogThreshold = 8;
 
     /**
+     * Smooth how fast chunks stream to each managed client. The hitching you feel moving into fresh
+     * terrain is the client meshing a burst of chunks at once; capping the send rate spreads that out
+     * for fewer stutters, at the cost of slightly slower fill. Set false to leave the engine alone.
+     */
+    public boolean smoothChunkStreaming = true;
+
+    /** Max chunks per second streamed to a managed client. {@code 0} keeps the engine per-connection default (local 256, LAN 128, internet 36). */
+    public int maxChunksPerSecond = 128;
+
+    /** Max chunks per server tick streamed to a managed client. This is the real anti-hitch lever (engine default is 4). {@code 0} keeps the default. */
+    public int maxChunksPerTick = 2;
+
+    /**
      * If LeanCore is installed, QuantumHy detects it on startup and turns off LeanCore's client
      * view-radius governance so the two don't both write it. QuantumHy then owns the view radius and
      * LeanCore keeps simulation radius, chunk throughput, and memory. Set false to leave LeanCore
@@ -186,6 +199,12 @@ public class QuantumHyConfig {
         }
         if (streamingBacklogThreshold < 0) {
             streamingBacklogThreshold = 0;
+        }
+        if (maxChunksPerSecond < 0) {
+            maxChunksPerSecond = 0;
+        }
+        if (maxChunksPerTick < 0) {
+            maxChunksPerTick = 0;
         }
     }
 

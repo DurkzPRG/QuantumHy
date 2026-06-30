@@ -1,5 +1,6 @@
 package com.durkz.quantumhy;
 
+import com.durkz.quantumhy.command.QuantumCommand;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.runtime.FpsRuntime;
 import com.hypixel.hytale.server.core.event.events.ShutdownEvent;
@@ -23,6 +24,8 @@ public class QuantumHyPlugin extends JavaPlugin {
 
         config = QuantumHyConfig.load(getDataDirectory());
 
+        getCommandRegistry().registerCommand(new QuantumCommand(config));
+
         if (!config.enabled) {
             getLogger().atInfo().log("QuantumHy %s disabled via config (enabled=false).",
                     getManifest().getVersion());
@@ -41,13 +44,14 @@ public class QuantumHyPlugin extends JavaPlugin {
                 "QuantumHy %s setup. config: verboseLog=%s tickInterval=%ds initialDelay=%ds hardCap=%d min=%d "
                         + "max=%d scan=%d densityLow=%.1f/ch densityHigh=%.1f/ch smoothing=%.2f adaptEntity=%s "
                         + "minEntityBlocks=%d entityLod=%.2fx minDelta=%d streamGrace=%s backlog>=%d "
-                        + "leanCoreTakeover=%s yield=%s",
+                        + "smoothStreaming=%s maxChunks/s=%d maxChunks/tick=%d leanCoreTakeover=%s yield=%s",
                 getManifest().getVersion(), config.verboseLog, config.tickIntervalSeconds,
                 config.initialDelaySeconds, config.targetClientViewRadius, config.minClientViewRadius,
                 config.maxClientViewRadius, config.densityScanChunkRadius, config.densityLowPerChunk,
                 config.densityHighPerChunk, config.densitySmoothing, config.adaptEntityRadius,
                 config.minEntityViewBlocks, config.entityLodAggressiveness, config.minViewRadiusDelta,
-                config.respectStreamingGrace, config.streamingBacklogThreshold, config.leanCoreTakeover,
+                config.respectStreamingGrace, config.streamingBacklogThreshold, config.smoothChunkStreaming,
+                config.maxChunksPerSecond, config.maxChunksPerTick, config.leanCoreTakeover,
                 config.yieldToLeanCoreViewRadius);
         getLogger().atInfo().log("%s", configDump);
     }
@@ -62,10 +66,22 @@ public class QuantumHyPlugin extends JavaPlugin {
 
     @Override
     protected void shutdown() {
+        stopDevPerfMeterIfPresent();
         if (runtime != null) {
             runtime.shutdown();
             runtime = null;
         }
         super.shutdown();
+    }
+
+    /** Stops the local-only dev performance meter so it logs its session average, if it is in this build. */
+    private void stopDevPerfMeterIfPresent() {
+        try {
+            Class.forName("com.durkz.quantumhy.devperf.PerfMeter").getMethod("stop").invoke(null);
+        } catch (ClassNotFoundException notInBuild) {
+            // Expected in published builds: the dev meter is gitignored and not shipped.
+        } catch (ReflectiveOperationException ignored) {
+            // Dev tool only; never block shutdown on it.
+        }
     }
 }

@@ -20,3 +20,6 @@ libs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local-only dev performance meter: test tool for this machine, never published
+src/main/java/com/durkz/quantumhy/devperf/

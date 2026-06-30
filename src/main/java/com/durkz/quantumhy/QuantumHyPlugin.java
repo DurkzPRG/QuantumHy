@@ -3,6 +3,7 @@ package com.durkz.quantumhy;
 import com.durkz.quantumhy.command.QuantumCommand;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.runtime.FpsRuntime;
+import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.EntityCullSystem;
 import com.hypixel.hytale.server.core.event.events.ShutdownEvent;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
@@ -41,6 +42,10 @@ public class QuantumHyPlugin extends JavaPlugin {
                     new EntityCullSystem(EntityTrackerSystems.EntityViewer.getComponentType(), config));
         }
 
+        if (config.holdSpawnOnLoadingChunks) {
+            getChunkStoreRegistry().registerSystem(new SpawnStreamPauseSystem(config, getLogger()));
+        }
+
         getEventRegistry().registerGlobal(ShutdownEvent.class, e -> {
             if (runtime != null) {
                 runtime.shutdown();
@@ -50,7 +55,7 @@ public class QuantumHyPlugin extends JavaPlugin {
         String configDump = String.format(java.util.Locale.ROOT,
                 "QuantumHy %s setup. config: verboseLog=%s tickInterval=%ds initialDelay=%ds hardCap=%d min=%d "
                         + "max=%d scan=%d densityLow=%.1f/ch densityHigh=%.1f/ch smoothing=%.2f adaptEntity=%s "
-                        + "minEntityBlocks=%d entityLod=%.2fx vCull=%s entityCap=%s minDelta=%d streamGrace=%s "
+                        + "minEntityBlocks=%d entityLod=%.2fx vCull=%s entityCap=%s spawnHold=%s minDelta=%d streamGrace=%s "
                         + "backlog>=%d smoothStreaming=%s maxChunks/s=%d maxChunks/tick=%d leanCoreTakeover=%s yield=%s",
                 getManifest().getVersion(), config.verboseLog, config.tickIntervalSeconds,
                 config.initialDelaySeconds, config.targetClientViewRadius, config.minClientViewRadius,
@@ -59,6 +64,7 @@ public class QuantumHyPlugin extends JavaPlugin {
                 config.minEntityViewBlocks, config.entityLodAggressiveness,
                 config.maxEntityVerticalDistance > 0 ? config.maxEntityVerticalDistance + "b" : "off",
                 config.maxVisibleEntitiesPerPlayer > 0 ? String.valueOf(config.maxVisibleEntitiesPerPlayer) : "off",
+                config.holdSpawnOnLoadingChunks,
                 config.minViewRadiusDelta,
                 config.respectStreamingGrace, config.streamingBacklogThreshold, config.smoothChunkStreaming,
                 config.maxChunksPerSecond, config.maxChunksPerTick, config.leanCoreTakeover,

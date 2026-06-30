@@ -15,6 +15,7 @@ import com.hypixel.hytale.component.system.tick.EntityTickingSystem;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
+import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
@@ -23,6 +24,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
@@ -36,6 +39,9 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
 
     public static final LongAdder VERTICAL_CULLED = new LongAdder();
     public static final LongAdder CAP_CULLED = new LongAdder();
+
+    private static final ConcurrentHashMap<String, AtomicLong> VERTICAL_SINCE_REPORT = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, AtomicLong> CAP_SINCE_REPORT = new ConcurrentHashMap<>();
 
     private final QuantumHyConfig config;
     private final ComponentType<EntityStore, EntityTrackerSystems.EntityViewer> entityViewerComponentType;
@@ -81,6 +87,9 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         final var viewer = archetypeChunk.getComponent(index, entityViewerComponentType);
         assert viewer != null;
 
+        final World world = store.getExternalData().getWorld();
+        final String worldName = world == null ? "?" : world.getName();
+
         final var transformComponent = archetypeChunk.getComponent(index, TransformComponent.getComponentType());
         assert transformComponent != null;
         final var position = transformComponent.getPosition();
@@ -97,20 +106,40 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
 
                 if (Math.abs(targetTransform.getPosition().y - position.y) > maxVertical) {
                     iterator.remove();
-                    VERTICAL_CULLED.increment();
+                    recordVerticalCull(worldName);
                 }
             }
         }
 
         final int cap = config.maxVisibleEntitiesPerPlayer;
         if (cap > 0 && viewer.visible.size() > cap) {
-            capToNearest(viewer, position, cap, commandBuffer);
+            capToNearest(viewer, position, cap, commandBuffer, worldName);
         }
+    }
+
+    private static void recordVerticalCull(@Nonnull String worldName) {
+        VERTICAL_CULLED.increment();
+        VERTICAL_SINCE_REPORT.computeIfAbsent(worldName, ignored -> new AtomicLong()).incrementAndGet();
+    }
+
+    private static void recordCapCull(@Nonnull String worldName) {
+        CAP_CULLED.increment();
+        CAP_SINCE_REPORT.computeIfAbsent(worldName, ignored -> new AtomicLong()).incrementAndGet();
+    }
+
+    public static long drainVerticalSinceReport(@Nonnull String worldName) {
+        AtomicLong counter = VERTICAL_SINCE_REPORT.get(worldName);
+        return counter == null ? 0L : counter.getAndSet(0L);
+    }
+
+    public static long drainCapSinceReport(@Nonnull String worldName) {
+        AtomicLong counter = CAP_SINCE_REPORT.get(worldName);
+        return counter == null ? 0L : counter.getAndSet(0L);
     }
 
     /** Keeps the {@code cap} nearest non-player entities, dropping the farthest ones over the cap. */
     private void capToNearest(@Nonnull EntityTrackerSystems.EntityViewer viewer, @Nonnull org.joml.Vector3d position,
-                              int cap, @Nonnull CommandBuffer<EntityStore> commandBuffer) {
+                              int cap, @Nonnull CommandBuffer<EntityStore> commandBuffer, @Nonnull String worldName) {
         final List<Candidate> candidates = new ArrayList<>(viewer.visible.size());
         for (final Ref<EntityStore> ref : viewer.visible) {
             if (!ref.isValid() || commandBuffer.getArchetype(ref).contains(playerRefComponentType)) continue;
@@ -127,7 +156,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         for (int i = 0; i < candidates.size() && over > 0; i++) {
             if (viewer.visible.remove(candidates.get(i).ref)) {
                 over--;
-                CAP_CULLED.increment();
+                recordCapCull(worldName);
             }
         }
     }

@@ -3,12 +3,15 @@ package com.durkz.quantumhy.runtime;
 import com.durkz.quantumhy.QuantumHyPlugin;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
+import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.ClientViewRadiusController;
+import com.durkz.quantumhy.view.EntityCullSystem;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 
+import javax.annotation.Nonnull;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -176,6 +179,8 @@ public final class FpsRuntime {
                 plugin.getLogger().atWarning().withCause(ex).log("view radius apply failed for a player");
             }
         }
+        logActionDeltas(world);
+
         if (details != null) {
             plugin.getLogger().atInfo().log("pass [world=%s] players=%d changed=%d: %s",
                     shortId(worldUuid), batch.size(), changed,
@@ -183,6 +188,26 @@ public final class FpsRuntime {
         } else if (changed > 0) {
             plugin.getLogger().atInfo().log("pass [world=%s] changed %d view radius", shortId(worldUuid), changed);
         }
+    }
+
+    /** Server log summary for spawn hold and entity cull since the last pass on this world. */
+    private void logActionDeltas(@Nonnull World world) {
+        String worldName = world.getName();
+        long poolCooldowns = SpawnStreamPauseSystem.drainCooldownsSinceReport(worldName);
+        long poolReleases = SpawnStreamPauseSystem.drainReleasesSinceReport(worldName);
+        int poolCooled = SpawnStreamPauseSystem.poolCooledCount(worldName);
+        boolean streamPause = SpawnStreamPauseSystem.isStreamPauseActive(worldName);
+        long vertical = EntityCullSystem.drainVerticalSinceReport(worldName);
+        long cap = EntityCullSystem.drainCapSinceReport(worldName);
+        if (!streamPause && poolCooldowns == 0L && poolReleases == 0L && poolCooled == 0
+                && vertical == 0L && cap == 0L) {
+            return;
+        }
+        plugin.getLogger().atInfo().log(
+                "actions [world=%s] streamPause=%s poolCooled=%d poolTick=%d poolRelease=%d "
+                        + "entityVertical=%d entityCap=%d (session pool=%d)",
+                worldName, streamPause ? "on" : "off", poolCooled, poolCooldowns, poolReleases,
+                vertical, cap, SpawnStreamPauseSystem.POOL_COOLDOWNS.sum());
     }
 
     private static String shortId(UUID uuid) {

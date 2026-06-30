@@ -102,6 +102,12 @@ public class QuantumHyConfig {
      */
     public int maxVisibleEntitiesPerPlayer = 0;
 
+    /**
+     * Pause environmental spawning while any player has chunks streaming to the client
+     * ({@code ChunkTracker.getLoadingChunksCount() > 0}). Uses the engine spawn pool cooldown.
+     */
+    public boolean holdSpawnOnLoadingChunks = true;
+
     /** Minimum change (chunks) before an update is sent, to avoid churn. */
     public int minViewRadiusDelta = 2;
 

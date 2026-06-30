@@ -2,6 +2,7 @@ package com.durkz.quantumhy.command;
 
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
+import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.EntityCullSystem;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
@@ -13,6 +14,7 @@ import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
+import com.hypixel.hytale.server.core.universe.world.World;
 
 import java.util.Collection;
 import java.util.Locale;
@@ -128,6 +130,26 @@ public class QuantumCommand extends AbstractCommandCollection {
                 config.maxEntityVerticalDistance > 0 ? config.maxEntityVerticalDistance + "b" : "off",
                 config.maxVisibleEntitiesPerPlayer > 0 ? String.valueOf(config.maxVisibleEntitiesPerPlayer) : "off",
                 EntityCullSystem.VERTICAL_CULLED.sum(), EntityCullSystem.CAP_CULLED.sum()), "#AAAAAA");
+
+        Collection<PlayerRef> online = Universe.get().getPlayers();
+        String worldName = "default";
+        if (online != null) {
+            for (PlayerRef ref : online) {
+                if (ref != null && ref.isValid() && ref.getWorldUuid() != null) {
+                    World world = Universe.get().getWorld(ref.getWorldUuid());
+                    if (world != null) {
+                        worldName = world.getName();
+                        break;
+                    }
+                }
+            }
+        }
+        send(ctx, String.format(Locale.ROOT,
+                "spawn pause: %s pause=%s pool=%d cooldowns=%d",
+                config.holdSpawnOnLoadingChunks ? "on" : "off",
+                SpawnStreamPauseSystem.isStreamPauseActive(worldName) ? "on" : "off",
+                SpawnStreamPauseSystem.poolCooledCount(worldName),
+                SpawnStreamPauseSystem.POOL_COOLDOWNS.sum()), "#AAAAAA");
         send(ctx, String.format(Locale.ROOT,
                 "streaming: smooth=%s maxChunks/s=%s maxChunks/tick=%s",
                 config.smoothChunkStreaming,
@@ -140,7 +162,6 @@ public class QuantumCommand extends AbstractCommandCollection {
                 : "not present (standalone)";
         send(ctx, "LeanCore: " + lean, "#AAAAAA");
 
-        Collection<PlayerRef> online = Universe.get().getPlayers();
         int count = online == null ? 0 : online.size();
         send(ctx, "online players: " + count, "#AAAAAA");
         if (online == null) {

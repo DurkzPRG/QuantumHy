@@ -89,6 +89,9 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `adaptEntityRadius` | `true` | Also shrink how far entities are streamed (not just chunks). The big win in mob-heavy spots. |
 | `minEntityViewBlocks` | `48` | Never stream entities closer than this, in blocks (16 blocks = 1 chunk). |
 | `entityLodAggressiveness` | `1.5` | Global entity LOD cull. `1.0` is the engine default; higher drops small/distant entities sooner. |
+| `maxEntityVerticalDistance` | `40` | Drop entities too far above/below you from the stream (caves, ceilings). `0` = off. |
+| `maxVisibleEntitiesPerPlayer` | `0` | Cap streamed entities per player in crowds (`0` = off). |
+| `holdSpawnOnLoadingChunks` | `true` | Pause environmental spawning while any player has chunks streaming to the client. |
 | `minViewRadiusDelta` | `2` | Don't bother changing the view for tiny differences. |
 | `respectStreamingGrace` | `true` | Don't shrink while you're still loading chunks. |
 | `streamingBacklogThreshold` | `8` | How many loading chunks counts as "still streaming". |

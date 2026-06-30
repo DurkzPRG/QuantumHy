@@ -2,6 +2,7 @@ package com.durkz.quantumhy.runtime;
 
 import com.durkz.quantumhy.QuantumHyPlugin;
 import com.durkz.quantumhy.config.QuantumHyConfig;
+import com.durkz.quantumhy.pressure.PressureGovernor;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.ClientViewRadiusController;
@@ -35,6 +36,7 @@ public final class FpsRuntime {
     private final QuantumHyPlugin plugin;
     private final QuantumHyConfig config;
     private final ClientViewRadiusController controller;
+    private final PressureGovernor pressure;
 
     private ScheduledExecutorService scheduler;
     private ScheduledFuture<?> tickFuture;
@@ -47,6 +49,7 @@ public final class FpsRuntime {
         this.plugin = plugin;
         this.config = config;
         this.controller = new ClientViewRadiusController(config);
+        this.pressure = new PressureGovernor(plugin);
     }
 
     public void start() {
@@ -158,11 +161,15 @@ public final class FpsRuntime {
         if (!running) {
             return;
         }
+        PressureGovernor.Snapshot pressureSnap = pressure.update(world, config, config.tickIntervalSeconds);
+        pressure.applyEntityLod(config, pressureSnap);
+        PressureGovernor.ViewPassContext pass = pressure.viewContext(config, pressureSnap);
+
         int changed = 0;
         StringBuilder details = config.verboseLog ? new StringBuilder() : null;
         for (PlayerRef ref : batch) {
             try {
-                ClientViewRadiusController.Decision decision = controller.applyOne(ref, world);
+                ClientViewRadiusController.Decision decision = controller.applyOne(ref, world, pass);
                 if (decision == null) {
                     continue;
                 }
@@ -179,7 +186,7 @@ public final class FpsRuntime {
                 plugin.getLogger().atWarning().withCause(ex).log("view radius apply failed for a player");
             }
         }
-        logActionDeltas(world);
+        logActionDeltas(world, pressureSnap);
 
         if (details != null) {
             plugin.getLogger().atInfo().log("pass [world=%s] players=%d changed=%d: %s",
@@ -190,8 +197,8 @@ public final class FpsRuntime {
         }
     }
 
-    /** Server log summary for spawn hold and entity cull since the last pass on this world. */
-    private void logActionDeltas(@Nonnull World world) {
+    /** Server log summary for spawn hold, entity cull, and pressure since the last pass on this world. */
+    private void logActionDeltas(@Nonnull World world, @Nonnull PressureGovernor.Snapshot pressureSnap) {
         String worldName = world.getName();
         long poolCooldowns = SpawnStreamPauseSystem.drainCooldownsSinceReport(worldName);
         long poolReleases = SpawnStreamPauseSystem.drainReleasesSinceReport(worldName);
@@ -200,14 +207,19 @@ public final class FpsRuntime {
         long vertical = EntityCullSystem.drainVerticalSinceReport(worldName);
         long cap = EntityCullSystem.drainCapSinceReport(worldName);
         if (!streamPause && poolCooldowns == 0L && poolReleases == 0L && poolCooled == 0
-                && vertical == 0L && cap == 0L) {
+                && vertical == 0L && cap == 0L && !pressureSnap.pressured()) {
             return;
         }
         plugin.getLogger().atInfo().log(
-                "actions [world=%s] streamPause=%s poolCooled=%d poolTick=%d poolRelease=%d "
+                "actions [world=%s] pressure=%s streamPause=%s poolCooled=%d poolTick=%d poolRelease=%d "
                         + "entityVertical=%d entityCap=%d (session pool=%d)",
-                worldName, streamPause ? "on" : "off", poolCooled, poolCooldowns, poolReleases,
+                worldName, PressureGovernor.formatStatus(pressureSnap),
+                streamPause ? "on" : "off", poolCooled, poolCooldowns, poolReleases,
                 vertical, cap, SpawnStreamPauseSystem.POOL_COOLDOWNS.sum());
+    }
+
+    public PressureGovernor pressureGovernor() {
+        return pressure;
     }
 
     private static String shortId(UUID uuid) {
@@ -217,6 +229,7 @@ public final class FpsRuntime {
 
     public void shutdown() {
         running = false;
+        pressure.shutdown(config);
         EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO_DEFAULT;
         if (tickFuture != null) {
             tickFuture.cancel(false);

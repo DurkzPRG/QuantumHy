@@ -1,6 +1,7 @@
 package com.durkz.quantumhy.view;
 
 import com.durkz.quantumhy.config.QuantumHyConfig;
+import com.durkz.quantumhy.pressure.PressureGovernor;
 import com.hypixel.hytale.component.ArchetypeChunk;
 import com.hypixel.hytale.component.CommandBuffer;
 import com.hypixel.hytale.component.ComponentType;
@@ -94,7 +95,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         assert transformComponent != null;
         final var position = transformComponent.getPosition();
 
-        final int maxVertical = config.maxEntityVerticalDistance;
+        final int maxVertical = PressureGovernor.verticalDistance(worldName, config.maxEntityVerticalDistance);
         if (maxVertical > 0) {
             for (final var iterator = viewer.visible.iterator(); iterator.hasNext(); ) {
                 final Ref<EntityStore> targetRef = iterator.next();

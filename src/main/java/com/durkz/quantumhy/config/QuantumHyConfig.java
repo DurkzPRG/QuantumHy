@@ -143,6 +143,45 @@ public class QuantumHyConfig {
      */
     public boolean yieldToLeanCoreViewRadius = false;
 
+    /** When true, tighten render levers when world MSPT stays high. Restored after cooldown. */
+    public boolean pressureGovernorEnabled = true;
+
+    /** MSPT (10s average) at or above this for {@link #pressureSustainSeconds} enters pressure mode. */
+    public double pressureMsptEnter = 52.0D;
+
+    /** MSPT at or below this for {@link #pressureCooldownSeconds} exits pressure mode. */
+    public double pressureMsptExit = 47.0D;
+
+    /** Seconds MSPT must stay at/above {@link #pressureMsptEnter} before levers tighten. */
+    public int pressureSustainSeconds = 6;
+
+    /** Seconds MSPT must stay at/below {@link #pressureMsptExit} before levers restore. */
+    public int pressureCooldownSeconds = 15;
+
+    /** Under pressure, density thresholds tighten by this factor (higher = more shrink). */
+    public double pressureDensityMultiplier = 1.35D;
+
+    /** Under pressure, multiply {@link #maxChunksPerSecond} and {@link #maxChunksPerTick}. */
+    public double pressureChunkRateMultiplier = 0.75D;
+
+    /** Under pressure, multiply entity LOD ratio by this on top of {@link #entityLodAggressiveness}. */
+    public double pressureLodMultiplier = 1.15D;
+
+    /** Under pressure, subtract this many blocks from {@link #maxEntityVerticalDistance}. */
+    public int pressureVerticalTrimBlocks = 8;
+
+    /** Under pressure, flip NPC spawn, block tick, and chunk unload on the world config. Restored on release. */
+    public boolean pressureWorldLevers = false;
+
+    /**
+     * Under pressure, trim bloom and sunshaft client effects and push packets to online players.
+     * Restored on release and shutdown.
+     */
+    public boolean pressureTrimClientEffects = true;
+
+    /** Multiplier applied to bloom/sunshaft intensities while {@link #pressureTrimClientEffects} is active. */
+    public double pressureEffectScale = 0.5D;
+
     public static QuantumHyConfig load(Path dataDirectory) {
         File directory = dataDirectory.toFile();
         if (!directory.exists()) {
@@ -236,6 +275,33 @@ public class QuantumHyConfig {
         }
         if (maxChunksPerTick < 0) {
             maxChunksPerTick = 0;
+        }
+        if (pressureMsptEnter <= 0) {
+            pressureMsptEnter = 52.0D;
+        }
+        if (pressureMsptExit <= 0 || pressureMsptExit >= pressureMsptEnter) {
+            pressureMsptExit = Math.max(1.0D, pressureMsptEnter - 5.0D);
+        }
+        if (pressureSustainSeconds < 1) {
+            pressureSustainSeconds = 1;
+        }
+        if (pressureCooldownSeconds < 1) {
+            pressureCooldownSeconds = 1;
+        }
+        if (pressureDensityMultiplier < 1.0D) {
+            pressureDensityMultiplier = 1.0D;
+        }
+        if (pressureChunkRateMultiplier <= 0 || pressureChunkRateMultiplier > 1.0D) {
+            pressureChunkRateMultiplier = 0.75D;
+        }
+        if (pressureLodMultiplier < 1.0D) {
+            pressureLodMultiplier = 1.0D;
+        }
+        if (pressureVerticalTrimBlocks < 0) {
+            pressureVerticalTrimBlocks = 0;
+        }
+        if (pressureEffectScale <= 0 || pressureEffectScale > 1.0D) {
+            pressureEffectScale = 0.5D;
         }
     }
 

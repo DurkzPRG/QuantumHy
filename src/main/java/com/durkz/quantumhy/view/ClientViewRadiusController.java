@@ -1,6 +1,7 @@
 package com.durkz.quantumhy.view;
 
 import com.durkz.quantumhy.config.QuantumHyConfig;
+import com.durkz.quantumhy.pressure.PressureGovernor.ViewPassContext;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.util.ChunkUtil;
@@ -77,11 +78,15 @@ public final class ClientViewRadiusController {
         }
     }
 
+    public Decision applyOne(PlayerRef playerRef, World world) {
+        return applyOne(playerRef, world, ViewPassContext.fromConfig(config));
+    }
+
     /**
      * Decides and applies the targets for one player. Must run on that player's world thread.
      * Returns the decision (for logging), or {@code null} if the player couldn't be read.
      */
-    public Decision applyOne(PlayerRef playerRef, World world) {
+    public Decision applyOne(PlayerRef playerRef, World world, ViewPassContext pass) {
         if (playerRef == null || !playerRef.isValid()) {
             return null;
         }
@@ -104,7 +109,7 @@ public final class ClientViewRadiusController {
         PlayerState state = stateFor(playerRef.getUuid());
         Density density = sampleDensity(playerRef, world, config.densityScanChunkRadius);
         double smoothed = density.valid() ? smooth(state, density.perChunk()) : -1;
-        double frac = density.valid() ? shrinkFraction(smoothed) : 0.0D;
+        double frac = density.valid() ? shrinkFraction(smoothed, pass) : 0.0D;
         String reason = !density.valid() ? "no-sample"
                 : frac <= 0 ? "open" : (frac >= 1 ? "density-min" : "density");
 
@@ -140,7 +145,7 @@ public final class ClientViewRadiusController {
             }
         }
 
-        applyChunkStreamingSmoothing(playerRef);
+        applyChunkStreamingSmoothing(playerRef, pass);
 
         return new Decision(name, density.entities(), density.chunks(), smoothed,
                 chunkCurrent, chunkTarget, chunkApplied, chunkHeld, entCurrent, entTarget, entApplied,
@@ -151,7 +156,7 @@ public final class ClientViewRadiusController {
      * Caps how fast chunks stream to this client, so a freshly opened radius arrives spread out
      * instead of as one burst the client has to mesh at once. Idempotent: only writes on change.
      */
-    private void applyChunkStreamingSmoothing(PlayerRef playerRef) {
+    private void applyChunkStreamingSmoothing(PlayerRef playerRef, ViewPassContext pass) {
         if (!config.smoothChunkStreaming) {
             return;
         }
@@ -159,11 +164,11 @@ public final class ClientViewRadiusController {
         if (tracker == null) {
             return;
         }
-        if (config.maxChunksPerSecond > 0 && tracker.getMaxChunksPerSecond() != config.maxChunksPerSecond) {
-            tracker.setMaxChunksPerSecond(config.maxChunksPerSecond);
+        if (pass.maxChunksPerSecond() > 0 && tracker.getMaxChunksPerSecond() != pass.maxChunksPerSecond()) {
+            tracker.setMaxChunksPerSecond(pass.maxChunksPerSecond());
         }
-        if (config.maxChunksPerTick > 0 && tracker.getMaxChunksPerTick() != config.maxChunksPerTick) {
-            tracker.setMaxChunksPerTick(config.maxChunksPerTick);
+        if (pass.maxChunksPerTick() > 0 && tracker.getMaxChunksPerTick() != pass.maxChunksPerTick()) {
+            tracker.setMaxChunksPerTick(pass.maxChunksPerTick());
         }
     }
 
@@ -206,9 +211,9 @@ public final class ClientViewRadiusController {
     }
 
     /** 0 at or below the low threshold (no shrink), 1 at or above the high threshold (full shrink). */
-    private double shrinkFraction(double perChunk) {
-        double low = config.densityLowPerChunk;
-        double high = config.densityHighPerChunk;
+    private double shrinkFraction(double perChunk, ViewPassContext pass) {
+        double low = pass.densityLowPerChunk();
+        double high = pass.densityHighPerChunk();
         if (perChunk <= low) {
             return 0.0D;
         }

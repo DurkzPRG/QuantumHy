@@ -100,6 +100,18 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `maxChunksPerTick` | `2` | Cap on chunks streamed per tick. This is the real anti-hitch lever (engine default is 4). `0` keeps the default. |
 | `leanCoreTakeover` | `true` | If LeanCore is installed, take the view radius over from it (see below). |
 | `yieldToLeanCoreViewRadius` | `false` | The opposite: leave the view radius to LeanCore (see below). |
+| `pressureGovernorEnabled` | `true` | Tighten render levers when world MSPT stays high. |
+| `pressureMsptEnter` | `52` | 10s average MSPT at or above this enters pressure mode. |
+| `pressureMsptExit` | `47` | MSPT at or below this exits pressure mode (hysteresis). |
+| `pressureSustainSeconds` | `6` | How long MSPT must stay high before levers tighten. |
+| `pressureCooldownSeconds` | `15` | How long MSPT must stay low before levers restore. |
+| `pressureDensityMultiplier` | `1.35` | Under pressure, density thresholds tighten by this factor. |
+| `pressureChunkRateMultiplier` | `0.75` | Under pressure, multiply chunk streaming caps. |
+| `pressureLodMultiplier` | `1.15` | Under pressure, extra entity LOD cull on top of `entityLodAggressiveness`. |
+| `pressureVerticalTrimBlocks` | `8` | Under pressure, subtract from `maxEntityVerticalDistance`. |
+| `pressureWorldLevers` | `false` | Under pressure, pause NPC spawn and block tick on the world config (restored on release). |
+| `pressureTrimClientEffects` | `true` | Under pressure, trim bloom/sunshaft client effects (restored on release). |
+| `pressureEffectScale` | `0.5` | Multiplier for client effect intensities while trimmed. |
 
 ## Running it with LeanCore
 

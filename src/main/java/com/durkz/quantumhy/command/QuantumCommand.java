@@ -2,6 +2,7 @@ package com.durkz.quantumhy.command;
 
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
+import com.durkz.quantumhy.pressure.PressureGovernor;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.EntityCullSystem;
 import com.hypixel.hytale.server.core.Message;
@@ -18,6 +19,7 @@ import com.hypixel.hytale.server.core.universe.world.World;
 
 import java.util.Collection;
 import java.util.Locale;
+import java.util.UUID;
 
 /** {@code /q status} (alias /quantumhy). Read-only status and diagnostics for what QuantumHy is doing right now. */
 public class QuantumCommand extends AbstractCommandCollection {
@@ -133,10 +135,12 @@ public class QuantumCommand extends AbstractCommandCollection {
 
         Collection<PlayerRef> online = Universe.get().getPlayers();
         String worldName = "default";
+        UUID worldUuid = null;
         if (online != null) {
             for (PlayerRef ref : online) {
                 if (ref != null && ref.isValid() && ref.getWorldUuid() != null) {
-                    World world = Universe.get().getWorld(ref.getWorldUuid());
+                    worldUuid = ref.getWorldUuid();
+                    World world = Universe.get().getWorld(worldUuid);
                     if (world != null) {
                         worldName = world.getName();
                         break;
@@ -144,6 +148,15 @@ public class QuantumCommand extends AbstractCommandCollection {
                 }
             }
         }
+        PressureGovernor.Snapshot pressure = config.pressureGovernorEnabled
+                ? PressureGovernor.statusSnapshot(worldUuid)
+                : PressureGovernor.Snapshot.idle();
+        send(ctx, String.format(Locale.ROOT,
+                "pressure: %s enter=%.0fms exit=%.0fms effects=%s worldLevers=%s",
+                config.pressureGovernorEnabled ? PressureGovernor.formatStatus(pressure) : "disabled",
+                config.pressureMsptEnter, config.pressureMsptExit,
+                config.pressureTrimClientEffects ? "on" : "off",
+                config.pressureWorldLevers ? "on" : "off"), "#AAAAAA");
         send(ctx, String.format(Locale.ROOT,
                 "spawn pause: %s pause=%s pool=%d cooldowns=%d",
                 config.holdSpawnOnLoadingChunks ? "on" : "off",

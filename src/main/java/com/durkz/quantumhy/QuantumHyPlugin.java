@@ -56,7 +56,8 @@ public class QuantumHyPlugin extends JavaPlugin {
                 "QuantumHy %s setup. config: verboseLog=%s tickInterval=%ds initialDelay=%ds hardCap=%d min=%d "
                         + "max=%d scan=%d densityLow=%.1f/ch densityHigh=%.1f/ch smoothing=%.2f adaptEntity=%s "
                         + "minEntityBlocks=%d entityLod=%.2fx vCull=%s entityCap=%s spawnHold=%s minDelta=%d streamGrace=%s "
-                        + "backlog>=%d smoothStreaming=%s maxChunks/s=%d maxChunks/tick=%d leanCoreTakeover=%s yield=%s",
+                        + "backlog>=%d smoothStreaming=%s maxChunks/s=%d maxChunks/tick=%d leanCoreTakeover=%s yield=%s "
+                        + "pressureGov=%s msptEnter=%.0f effects=%s worldLevers=%s",
                 getManifest().getVersion(), config.verboseLog, config.tickIntervalSeconds,
                 config.initialDelaySeconds, config.targetClientViewRadius, config.minClientViewRadius,
                 config.maxClientViewRadius, config.densityScanChunkRadius, config.densityLowPerChunk,
@@ -68,7 +69,9 @@ public class QuantumHyPlugin extends JavaPlugin {
                 config.minViewRadiusDelta,
                 config.respectStreamingGrace, config.streamingBacklogThreshold, config.smoothChunkStreaming,
                 config.maxChunksPerSecond, config.maxChunksPerTick, config.leanCoreTakeover,
-                config.yieldToLeanCoreViewRadius);
+                config.yieldToLeanCoreViewRadius,
+                config.pressureGovernorEnabled, config.pressureMsptEnter,
+                config.pressureTrimClientEffects, config.pressureWorldLevers);
         getLogger().atInfo().log("%s", configDump);
     }
 

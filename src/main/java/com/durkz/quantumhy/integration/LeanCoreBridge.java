@@ -22,7 +22,7 @@ public final class LeanCoreBridge {
         return getPlugin() != null;
     }
 
-    /** Clears LeanCore's three view-radius flags so it stops writing the client view radius. True if any flag flipped. */
+    /** Clears LeanCore's three view-radius flags. True if config was reached and all three fields were written. */
     public static boolean disableViewRadiusGovernance() {
         Object plugin = getPlugin();
         if (plugin == null) {
@@ -32,10 +32,10 @@ public final class LeanCoreBridge {
         if (config == null) {
             return false;
         }
-        boolean a = setBoolean(config, "viewRadiusGovernanceEnabled");
-        boolean b = setBoolean(config, "liteViewRadiusEnabled");
-        boolean c = setBoolean(config, "motionViewRadiusBoostEnabled");
-        return a || b || c;
+        boolean a = clearFlag(config, "viewRadiusGovernanceEnabled");
+        boolean b = clearFlag(config, "liteViewRadiusEnabled");
+        boolean c = clearFlag(config, "motionViewRadiusBoostEnabled");
+        return a && b && c;
     }
 
     private static Object getPlugin() {
@@ -59,7 +59,7 @@ public final class LeanCoreBridge {
         }
     }
 
-    private static boolean setBoolean(Object target, String field) {
+    private static boolean clearFlag(Object target, String field) {
         try {
             Field f = target.getClass().getField(field);
             f.setBoolean(target, false);

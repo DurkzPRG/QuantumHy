@@ -2,6 +2,7 @@ package com.durkz.quantumhy.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.hypixel.hytale.logger.HytaleLogger;
 
 import java.io.File;
 import java.io.IOException;
@@ -11,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.logging.Level;
 
 /**
  * Config for QuantumHy, saved as QuantumHy.json. QuantumHy only ever shrinks under the player's own
@@ -247,7 +249,9 @@ public class QuantumHyConfig {
             } catch (IOException atomicUnsupported) {
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
             }
-        } catch (IOException ignored) {
+        } catch (IOException failed) {
+            HytaleLogger.getLogger().at(Level.WARNING).withCause(failed)
+                    .log("QuantumHy failed to save config to %s", configFile.getAbsolutePath());
         }
     }
 }

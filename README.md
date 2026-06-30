@@ -1,6 +1,6 @@
-<p align="center">
-  <img src="https://i.imgur.com/6z0DETt.png" alt="QuantumHy" width="480">
-</p>
+<img src="https://i.imgur.com/6z0DETt.png" alt="QuantumHy" width="240">
+
+[![CurseForge](https://img.shields.io/badge/CurseForge-QuantumHy-F16436?logo=curseforge&logoColor=white)](https://www.curseforge.com/hytale/mods/quantumhy)
 
 # QuantumHy
 
@@ -89,6 +89,13 @@ You need a Hytale install (that's where `HytaleServer.jar` comes from) and JDK 2
 
 The jar lands in `build/libs/`. Drop it in `%AppData%/Hytale/UserData/Mods/` to test it.
 
+## Links
+
+- [Mod page](https://durkzprgmods.pages.dev/mods/quantumhy)
+- [Docs](https://durkzprgmods.pages.dev/documentation/quantumhy)
+- [GitHub](https://github.com/DurkzPRG/QuantumHy)
+- [CurseForge](https://www.curseforge.com/hytale/mods/quantumhy)
+
 ## License
 
-MIT.
+MIT. See [LICENSE](LICENSE).

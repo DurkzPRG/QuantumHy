@@ -55,11 +55,19 @@ Realistic gain is somewhere around +30% to +45%, with bigger spikes in crowded a
 
 Mod on:
 
-[![QuantumHy mod on](https://img.youtube.com/vi/gjRcmj12A8A/hqdefault.jpg)](https://www.youtube.com/watch?v=gjRcmj12A8A)
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=gjRcmj12A8A">
+    <img src="https://img.youtube.com/vi/gjRcmj12A8A/maxresdefault.jpg" alt="QuantumHy mod on" width="720">
+  </a>
+</p>
 
 Mod off:
 
-[![QuantumHy mod off](https://img.youtube.com/vi/I8I05ioJG7g/hqdefault.jpg)](https://www.youtube.com/watch?v=I8I05ioJG7g)
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=I8I05ioJG7g">
+    <img src="https://img.youtube.com/vi/I8I05ioJG7g/maxresdefault.jpg" alt="QuantumHy mod off" width="720">
+  </a>
+</p>
 
 ## Config
 

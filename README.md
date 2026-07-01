@@ -115,20 +115,38 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 
 ## Running it with LeanCore
 
-If you run LeanCore too, QuantumHy sorts out the overlap for you. Both can set the client view
-radius and only one should, so QuantumHy takes it: on startup it detects LeanCore and turns off
-LeanCore's view-radius governance, then drives the view radius itself. LeanCore keeps doing
-everything else (simulation radius, chunk throughput, memory). You don't have to touch LeanCore's
-config.
+If you run LeanCore too, each mod owns different levers. QuantumHy never double-writes the same
+field LeanCore is already driving.
 
-This matters on dedicated servers and in solo, where LeanCore manages the view radius by default.
+| Lever | Default owner (both mods) |
+| --- | --- |
+| Client view radius | **QuantumHy** (`leanCoreTakeover=true` turns off LeanCore view governance) |
+| Entity stream radius | **QuantumHy** |
+| Hot/simulation radius | **LeanCore** (`maxHotLoadedChunksRadius`) |
+| Chunk send rate (`maxChunks/s`, `maxChunks/tick`) | **QuantumHy** if LeanCore `chunkThroughputGovernanceEnabled=false` (LeanCore default). **LeanCore** if that flag is true: QuantumHy auto-yields and stops writing send-rate caps. |
+| MSPT render trim (density, LOD, vertical, effects) | **QuantumHy** (heap/memory tiers stay LeanCore; signals are complementary) |
+| Spawn stream pause | **QuantumHy** |
+| Zone dormancy / memory unload | **LeanCore** |
 
-Two knobs if you want it different:
+**Recommended combo:** `leanCoreTakeover=true`, LeanCore `chunkThroughputGovernanceEnabled=false`,
+QuantumHy `smoothChunkStreaming=true`. No overlap.
 
-- `leanCoreTakeover` (default `true`): detect LeanCore and take the view radius over. Set it false
-  to leave LeanCore alone, but then both can fight over it.
-- `yieldToLeanCoreViewRadius` (default `false`): the opposite. QuantumHy stays out of the view
-  radius entirely and lets LeanCore keep it.
+**Risky combo:** LeanCore `chunkThroughputGovernanceEnabled=true` **and** QuantumHy trying to set
+chunk rate. QuantumHy detects this and yields chunk send-rate to LeanCore automatically; MSPT
+pressure still trims density, LOD, vertical cull, and client effects.
+
+Do not enable QuantumHy `pressureWorldLevers` alongside LeanCore unless you intend to flip
+world-level spawn/block-tick flags under MSPT (LeanCore does not touch those, but it is extra
+simulation pressure on top of memory governance).
+
+View-radius knobs:
+
+- `leanCoreTakeover` (default `true`): detect LeanCore and take the view radius over. Set false
+  to leave LeanCore alone, but then both may fight over client view radius.
+- `yieldToLeanCoreViewRadius` (default `false`): QuantumHy stays out of view radius and chunk
+  send-rate entirely; LeanCore keeps both if its throughput governance is on.
+
+Use `/q status` for live ownership (`chunkRateOwner=`, `LeanCore: view=...`).
 
 ## Commands
 

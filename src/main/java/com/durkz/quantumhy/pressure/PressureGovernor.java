@@ -84,11 +84,12 @@ public final class PressureGovernor {
     }
 
     public ViewPassContext viewContext(@Nonnull QuantumHyConfig config, @Nonnull Snapshot snap) {
+        boolean writeChunkRate = com.durkz.quantumhy.integration.LeanCoreBridge.shouldQuantumHyWriteChunkRate(config);
         return new ViewPassContext(
                 densityLowPerChunk(config, snap),
                 densityHighPerChunk(config, snap),
-                maxChunksPerSecond(config, snap),
-                maxChunksPerTick(config, snap));
+                writeChunkRate ? maxChunksPerSecond(config, snap) : 0,
+                writeChunkRate ? maxChunksPerTick(config, snap) : 0);
     }
 
     /** Must run on the world's thread. */

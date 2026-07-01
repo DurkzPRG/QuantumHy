@@ -1,6 +1,7 @@
 package com.durkz.quantumhy.view;
 
 import com.durkz.quantumhy.config.QuantumHyConfig;
+import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.pressure.PressureGovernor.ViewPassContext;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
@@ -157,7 +158,7 @@ public final class ClientViewRadiusController {
      * instead of as one burst the client has to mesh at once. Idempotent: only writes on change.
      */
     private void applyChunkStreamingSmoothing(PlayerRef playerRef, ViewPassContext pass) {
-        if (!config.smoothChunkStreaming) {
+        if (!LeanCoreBridge.shouldQuantumHyWriteChunkRate(config)) {
             return;
         }
         ChunkTracker tracker = playerRef.getChunkTracker();

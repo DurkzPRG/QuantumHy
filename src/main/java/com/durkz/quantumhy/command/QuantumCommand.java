@@ -164,15 +164,21 @@ public class QuantumCommand extends AbstractCommandCollection {
                 SpawnStreamPauseSystem.poolCooledCount(worldName),
                 SpawnStreamPauseSystem.POOL_COOLDOWNS.sum()), "#AAAAAA");
         send(ctx, String.format(Locale.ROOT,
-                "streaming: smooth=%s maxChunks/s=%s maxChunks/tick=%s",
+                "streaming: smooth=%s maxChunks/s=%s maxChunks/tick=%s chunkRateOwner=%s",
                 config.smoothChunkStreaming,
                 config.maxChunksPerSecond > 0 ? String.valueOf(config.maxChunksPerSecond) : "default",
-                config.maxChunksPerTick > 0 ? String.valueOf(config.maxChunksPerTick) : "default"), "#AAAAAA");
+                config.maxChunksPerTick > 0 ? String.valueOf(config.maxChunksPerTick) : "default",
+                LeanCoreBridge.chunkRateOwnerLabel(config)), "#AAAAAA");
 
-        String lean = config.yieldToLeanCoreViewRadius ? "yielding to LeanCore"
-                : LeanCoreBridge.isPresent()
-                ? (config.leanCoreTakeover ? "present, took over view radius" : "present, takeover off (may conflict)")
-                : "not present (standalone)";
+        String lean = String.format(Locale.ROOT, "view=%s | %s",
+                LeanCoreBridge.viewRadiusOwnerLabel(config),
+                LeanCoreBridge.isPresent()
+                        ? (config.leanCoreTakeover && !config.yieldToLeanCoreViewRadius
+                        ? "LeanCore present (sim/memory/hot radius)"
+                        : config.yieldToLeanCoreViewRadius
+                        ? "yielding view to LeanCore"
+                        : "present, takeover off (view may conflict)")
+                        : "not present (standalone)");
         send(ctx, "LeanCore: " + lean, "#AAAAAA");
 
         int count = online == null ? 0 : online.size();

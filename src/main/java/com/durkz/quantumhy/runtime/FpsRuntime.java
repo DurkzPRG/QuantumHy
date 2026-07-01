@@ -84,15 +84,18 @@ public final class FpsRuntime {
         }
     }
 
-    /** Turns off LeanCore's view-radius governance once it's loaded. Retried a few passes, since LeanCore may load after us. */
+    /** LeanCore coexistence: view-radius takeover and chunk-rate ownership. Retried a few passes. */
     private void ensureLeanCoreCoexistence() {
         if (leanCoreHandled) {
             return;
         }
         if (config.yieldToLeanCoreViewRadius || !config.leanCoreTakeover) {
-            if (!config.yieldToLeanCoreViewRadius && LeanCoreBridge.isPresent()) {
-                plugin.getLogger().atWarning().log(
-                        "LeanCore detected but leanCoreTakeover=false: both mods may fight over the client view radius.");
+            if (LeanCoreBridge.isPresent()) {
+                if (!config.yieldToLeanCoreViewRadius) {
+                    plugin.getLogger().atWarning().log(
+                            "LeanCore detected but leanCoreTakeover=false: both mods may fight over the client view radius.");
+                }
+                logLeanCoreChunkRateCoexistence();
             }
             leanCoreHandled = true;
             return;
@@ -102,6 +105,7 @@ public final class FpsRuntime {
             plugin.getLogger().atInfo().log(
                     "LeanCore detected: took over the client view radius (governance %s). LeanCore keeps simulation and memory.",
                     off ? "turned off" : "could not be reached, check LeanCore version");
+            logLeanCoreChunkRateCoexistence();
             leanCoreHandled = true;
             return;
         }
@@ -110,6 +114,20 @@ public final class FpsRuntime {
                     "LeanCore not detected after %d checks: QuantumHy owns the client view radius standalone.",
                     leanCoreAttempts);
             leanCoreHandled = true;
+        }
+    }
+
+    private void logLeanCoreChunkRateCoexistence() {
+        plugin.getLogger().atInfo().log("%s", LeanCoreBridge.coexistenceLine(config));
+        if (LeanCoreBridge.leanCoreOwnsChunkRate()) {
+            if (config.smoothChunkStreaming || config.pressureGovernorEnabled) {
+                plugin.getLogger().atInfo().log(
+                        "LeanCore chunkThroughputGovernanceEnabled=true: QuantumHy yields chunk send-rate "
+                                + "(no maxChunks/s or maxChunks/tick writes). MSPT pressure still trims density, LOD, and effects.");
+            }
+        } else if (config.smoothChunkStreaming) {
+            plugin.getLogger().atInfo().log(
+                    "LeanCore chunk throughput governance off: QuantumHy owns chunk send-rate (smoothStreaming=true).");
         }
     }
 

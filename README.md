@@ -41,9 +41,8 @@ instead of in one burst that makes the client hitch. That's the `smoothChunkStre
 
 ## Performance
 
-Solo world, same stress route (birds and mobs on screen). Client frametime capture on the **Hytale
-Client** process. Two runs: QuantumHy disabled vs default config enabled. Not a lab benchmark: run
-lengths differ slightly (~205s off, ~233s on).
+Client frametime capture on the **Hytale Client** process. Same test PC for every run below.
+Not lab benchmarks: different sessions, real play, spikes still happen.
 
 ### Test PC
 
@@ -53,7 +52,12 @@ lengths differ slightly (~205s off, ~233s on).
 | GPU | NVIDIA GeForce GTX 1650 4GB |
 | RAM | 16 GB (2×8 GB) |
 
-### At a glance
+### Stress route
+
+Solo world, same stress route (birds and mobs on screen). QuantumHy disabled vs default config
+enabled. Run lengths differ slightly (~205s off, ~233s on).
+
+#### At a glance
 
 | Metric | Mod off | Mod on | Change |
 | --- | ---: | ---: | --- |
@@ -67,7 +71,7 @@ P95 stayed high on both runs (~277 off, ~271 on). The big win is less time spent
 higher floor percentiles when the scene is busy. Massive frametime spikes (500ms–1s+) still show up
 on both runs, so QuantumHy helps sustained crowd load more than it removes one-off hitches.
 
-### Full capture
+#### Full capture
 
 | Metric | Mod off | Mod on |
 | --- | ---: | ---: |
@@ -88,33 +92,33 @@ on both runs, so QuantumHy helps sustained crowd load more than it removes one-o
 | Under 10 FPS | 4.0% | 4.5% |
 | Frametime variance < 2 ms | 70.0% | 86.5% |
 
-### Charts (mod off vs on)
+#### Charts
 
 Each capture is the full session: frametime graph on top, plus one analysis panel below.
 
 **Mod off**
 
-![Mod off, stuttering split](docs/benchmark/off-stuttering.png)
+![Stress route mod off, stuttering split](docs/benchmark/off-stuttering.png)
 
-![Mod off, frametime variances](docs/benchmark/off-variances.png)
+![Stress route mod off, frametime variances](docs/benchmark/off-variances.png)
 
-![Mod off, FPS thresholds](docs/benchmark/off-fps-thresholds.png)
+![Stress route mod off, FPS thresholds](docs/benchmark/off-fps-thresholds.png)
 
 **Mod on**
 
-![Mod on, stuttering split](docs/benchmark/on-stuttering.png)
+![Stress route mod on, stuttering split](docs/benchmark/on-stuttering.png)
 
-![Mod on, frametime variances](docs/benchmark/on-variances.png)
+![Stress route mod on, frametime variances](docs/benchmark/on-variances.png)
 
-![Mod on, FPS thresholds](docs/benchmark/on-fps-thresholds.png)
+![Stress route mod on, FPS thresholds](docs/benchmark/on-fps-thresholds.png)
 
-### Video
+#### Video
 
 Mod off: https://www.youtube.com/watch?v=H6Vns8b4hAg
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=H6Vns8b4hAg">
-    <img src="https://img.youtube.com/vi/H6Vns8b4hAg/maxresdefault.jpg" alt="QuantumHy mod off" width="720">
+    <img src="https://img.youtube.com/vi/H6Vns8b4hAg/maxresdefault.jpg" alt="QuantumHy stress route mod off" width="720">
   </a>
 </p>
 
@@ -122,9 +126,67 @@ Mod on: https://www.youtube.com/watch?v=CKGlXmX1M6k
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=CKGlXmX1M6k">
-    <img src="https://img.youtube.com/vi/CKGlXmX1M6k/maxresdefault.jpg" alt="QuantumHy mod on" width="720">
+    <img src="https://img.youtube.com/vi/CKGlXmX1M6k/maxresdefault.jpg" alt="QuantumHy stress route mod on" width="720">
   </a>
 </p>
+
+### Normal gameplay
+
+Solo world, normal session (~13 min each). No intentional stress route, just regular play.
+QuantumHy disabled vs default config enabled. Run lengths differ slightly (~775s off, ~783s on).
+
+#### At a glance
+
+| Metric | Mod off | Mod on | Change |
+| --- | ---: | ---: | --- |
+| Average FPS | 162.5 | 189.8 | **+17%** |
+| P5 | 106.1 | 131.3 | **+24%** |
+| P1 | 73.0 | 89.3 | **+22%** |
+| 1% low average | 45.3 | 53.5 | **+18%** |
+| Time under 60 FPS | 2.1% | 0.2% | **−90%** of that slice |
+
+Vanilla already averages high FPS in normal play. The win here is a higher floor (P5/P1), less time
+under 60 FPS, and slightly better frametime consistency (88.5% → 91.4% of frames with <2 ms
+variance). Massive load spikes still show up on both runs (startup, late-session hitch).
+
+#### Full capture
+
+| Metric | Mod off | Mod on |
+| --- | ---: | ---: |
+| Recording length | ~775 s | ~783 s |
+| Average FPS | 162.5 | 189.8 |
+| P95 | 236.1 | 253.9 |
+| P5 | 106.1 | 131.3 |
+| P1 | 73.0 | 89.3 |
+| 1% low average | 45.3 | 53.5 |
+| P0.2 | 52.5 | 56.5 |
+| P0.1 | 44.8 | 45.9 |
+| 0.1% low average | 13.2 | 16.7 |
+| Stuttering (time) | 1.5% (11.7 s) | 1.4% (10.9 s) |
+| Smooth | 98.5% | 98.6% |
+| Under 240 FPS | 97.6% | 85.9% |
+| Under 60 FPS | 2.1% | 0.2% |
+| Under 30 FPS | 1.0% | 0.1% |
+| Under 10 FPS | 0.8% | 0.0% |
+| Frametime variance < 2 ms | 88.5% | 91.4% |
+
+#### Charts
+
+**Mod off**
+
+![Normal gameplay mod off, stuttering split](docs/benchmark/normal-off-stuttering.png)
+
+![Normal gameplay mod off, frametime variances](docs/benchmark/normal-off-variances.png)
+
+![Normal gameplay mod off, FPS thresholds](docs/benchmark/normal-off-fps-thresholds.png)
+
+**Mod on**
+
+![Normal gameplay mod on, stuttering split](docs/benchmark/normal-on-stuttering.png)
+
+![Normal gameplay mod on, frametime variances](docs/benchmark/normal-on-variances.png)
+
+![Normal gameplay mod on, FPS thresholds](docs/benchmark/normal-on-fps-thresholds.png)
 
 ## Config
 

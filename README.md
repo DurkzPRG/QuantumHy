@@ -130,47 +130,50 @@ Mod on: https://www.youtube.com/watch?v=CKGlXmX1M6k
   </a>
 </p>
 
-### Normal gameplay
+### Normal gameplay (0.2.1)
 
-Solo world, normal session (~13 min each). No intentional stress route, just regular play.
-QuantumHy disabled vs default config enabled. Run lengths differ slightly (~775s off, ~783s on).
+Solo world, normal session (**~5 min** each). No intentional stress route, just regular play.
+QuantumHy disabled vs **0.2.1** default config enabled.
 
 #### At a glance
 
 | Metric | Mod off | Mod on | Change |
 | --- | ---: | ---: | --- |
-| Average FPS | 162.5 | 189.8 | **+17%** |
-| P5 | 106.1 | 131.3 | **+24%** |
-| P1 | 73.0 | 89.3 | **+22%** |
-| 1% low average | 45.3 | 53.5 | **+18%** |
-| Time under 60 FPS | 2.1% | 0.2% | **−90%** of that slice |
+| Average FPS | 159.6 | 226.9 | **+42%** |
+| P5 | 111.1 | 178.1 | **+60%** |
+| P1 | 77.2 | 139.1 | **+80%** |
+| 1% low average | 43.7 | 111.7 | **+155%** |
+| Time under 60 FPS | 2.2% | 0.1% | **−95%** of that slice |
 
-Vanilla already averages high FPS in normal play. The win here is a higher floor (P5/P1), less time
-under 60 FPS, and slightly better frametime consistency (88.5% → 91.4% of frames with <2 ms
-variance). Massive load spikes still show up on both runs (startup, late-session hitch).
+The 0.2.1 recalibration is meant for real exploration, not only mob piles: higher average FPS, a much
+higher floor (P5/P1), less time under 60 FPS, and tighter frametime consistency (87.8% → 95.1% of
+frames with <2 ms variance). Chunk-load hitches still show up on both runs; the mod cuts how long you
+sit in them.
 
 #### Full capture
 
 | Metric | Mod off | Mod on |
 | --- | ---: | ---: |
-| Recording length | ~775 s | ~783 s |
-| Average FPS | 162.5 | 189.8 |
-| P95 | 236.1 | 253.9 |
-| P5 | 106.1 | 131.3 |
-| P1 | 73.0 | 89.3 |
-| 1% low average | 45.3 | 53.5 |
-| P0.2 | 52.5 | 56.5 |
-| P0.1 | 44.8 | 45.9 |
-| 0.1% low average | 13.2 | 16.7 |
-| Stuttering (time) | 1.5% (11.7 s) | 1.4% (10.9 s) |
-| Smooth | 98.5% | 98.6% |
-| Under 240 FPS | 97.6% | 85.9% |
-| Under 60 FPS | 2.1% | 0.2% |
-| Under 30 FPS | 1.0% | 0.1% |
-| Under 10 FPS | 0.8% | 0.0% |
-| Frametime variance < 2 ms | 88.5% | 91.4% |
+| Session length | ~5 min | ~5 min |
+| Average FPS | 159.6 | 226.9 |
+| P95 | 219.7 | 272.7 |
+| P5 | 111.1 | 178.1 |
+| P1 | 77.2 | 139.1 |
+| 1% low average | 43.7 | 111.7 |
+| P0.2 | 51.5 | 105.5 |
+| P0.1 | 45.1 | 90.5 |
+| 0.1% low average | 11.6 | 61.9 |
+| Stuttering (time) | 1.9% | 0.2% |
+| Smooth | 98.1% | 99.8% |
+| Under 240 FPS | 99.5% | 64.3% |
+| Under 60 FPS | 2.2% | 0.1% |
+| Under 30 FPS | 1.2% | 0.1% |
+| Under 10 FPS | 1.0% | 0.0% |
+| Frametime variance < 2 ms | 87.8% | 95.1% |
 
 #### Charts
+
+![Normal gameplay comparison, mod off vs on](docs/benchmark/normal-comparison.png)
 
 **Mod off**
 
@@ -202,14 +205,20 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `minClientViewRadius` | `6` | Never pull anyone below this. |
 | `maxClientViewRadius` | `32` | Ceiling for the hard cap (your own view radius still wins). |
 | `densityScanChunkRadius` | `4` | How many chunks around you it counts entities in. |
-| `densityLowPerChunk` | `2.0` | Entities per chunk at or below this: you get the full radius. |
-| `densityHighPerChunk` | `8.0` | Entities per chunk at or above this: you get pulled to the minimum. |
+| `densityLowPerChunk` | `1.0` | Weighted entities per chunk at or below this: you get the full radius (minus optional baseline). |
+| `densityHighPerChunk` | `4.0` | Weighted entities per chunk at or above this: you get pulled to the minimum. |
+| `densityRingWeighting` | `true` | Count center chunks fully, outer scan rings less (no per-species tables). |
+| `densityRingEdgeWeight` | `0.55` | Ring weight at the scan edge when ring weighting is on (`1.0` = flat count). |
+| `baselineShrinkFraction` | `0.10` | Minimum shrink even in "open" density (`0` = off). |
+| `chunkLoadShrinkEnabled` | `true` | Extra shrink from loaded + streaming chunk count (render backlog). |
+| `chunkLoadLowChunks` | `48` | Loaded + loading chunks at or below this: no chunk-load shrink. |
+| `chunkLoadHighChunks` | `112` | At or above this: chunk-load shrink hits full strength. |
 | `densitySmoothing` | `0.4` | Smooths the density signal so a moving player's view doesn't flip-flop. Lower is smoother; `1.0` is off. |
 | `adaptEntityRadius` | `true` | Also shrink how far entities are streamed (not just chunks). The big win in mob-heavy spots. |
 | `minEntityViewBlocks` | `48` | Never stream entities closer than this, in blocks (16 blocks = 1 chunk). |
-| `entityLodAggressiveness` | `1.5` | Global entity LOD cull. `1.0` is the engine default; higher drops small/distant entities sooner. |
-| `maxEntityVerticalDistance` | `40` | Drop entities too far above/below you from the stream (caves, ceilings). `0` = off. |
-| `maxVisibleEntitiesPerPlayer` | `0` | Cap streamed entities per player in crowds (`0` = off). |
+| `entityLodAggressiveness` | `2.0` | Global entity LOD cull. `1.0` is the engine default; higher drops small/distant entities sooner. |
+| `maxEntityVerticalDistance` | `32` | Drop entities too far above/below you from the stream (caves, ceilings). `0` = off. |
+| `maxVisibleEntitiesPerPlayer` | `80` | Cap streamed entities per player in crowds (`0` = off). |
 | `holdSpawnOnLoadingChunks` | `true` | Pause environmental spawning while any player has chunks streaming to the client. |
 | `minViewRadiusDelta` | `2` | Don't bother changing the view for tiny differences. |
 | `respectStreamingGrace` | `true` | Don't shrink while you're still loading chunks. |
@@ -220,11 +229,11 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `leanCoreTakeover` | `true` | If LeanCore is installed, take the view radius over from it (see below). |
 | `yieldToLeanCoreViewRadius` | `false` | The opposite: leave the view radius to LeanCore (see below). |
 | `pressureGovernorEnabled` | `true` | Tighten render levers when world MSPT stays high. |
-| `pressureMsptEnter` | `52` | 10s average MSPT at or above this enters pressure mode. |
-| `pressureMsptExit` | `47` | MSPT at or below this exits pressure mode (hysteresis). |
-| `pressureSustainSeconds` | `6` | How long MSPT must stay high before levers tighten. |
+| `pressureMsptEnter` | `48` | 10s average MSPT at or above this enters pressure mode. |
+| `pressureMsptExit` | `43` | MSPT at or below this exits pressure mode (hysteresis). |
+| `pressureSustainSeconds` | `4` | How long MSPT must stay high before levers tighten. |
 | `pressureCooldownSeconds` | `15` | How long MSPT must stay low before levers restore. |
-| `pressureDensityMultiplier` | `1.35` | Under pressure, density thresholds tighten by this factor. |
+| `pressureDensityMultiplier` | `1.45` | Under pressure, density thresholds tighten by this factor. |
 | `pressureChunkRateMultiplier` | `0.75` | Under pressure, multiply chunk streaming caps. |
 | `pressureLodMultiplier` | `1.15` | Under pressure, extra entity LOD cull on top of `entityLodAggressiveness`. |
 | `pressureVerticalTrimBlocks` | `8` | Under pressure, subtract from `maxEntityVerticalDistance`. |

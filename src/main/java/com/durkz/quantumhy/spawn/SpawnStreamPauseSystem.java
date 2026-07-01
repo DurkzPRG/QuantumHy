@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.LongAdder;
 /**
  * Pauses environmental spawning while any player is streaming chunks to the client.
  *
- * <p>Engine flow (see {@link WorldSpawningSystem}, {@code ChunkSpawningSystems},
+ * Engine flow (see {@link WorldSpawningSystem}, {@code ChunkSpawningSystems},
  * {@code ChunkTracker}): {@code pickRandomChunk} only considers chunks already in
  * {@link com.hypixel.hytale.server.spawning.world.WorldEnvironmentSpawnData#getChunkRefList()}.
  * Chunks in the client's {@code !isLoaded} view ring usually have no server spawn row yet, so

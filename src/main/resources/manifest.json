@@ -1,7 +1,7 @@
 {
     "Group": "durkz",
     "Name": "QuantumHy",
-    "Version": "0.2.0",
+    "Version": "0.2.1",
     "Description": "Server-side FPS mod. Adapts each player's view and entity stream to local crowd density, smooths chunk streaming, and trims render load under real server pressure. Full radius in the open, tighter where it costs frames.",
     "Authors": [
         {

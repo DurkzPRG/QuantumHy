@@ -30,7 +30,7 @@ import javax.annotation.Nullable;
  * ({@link Player#setClientViewRadius(int)}) and the entity stream radius in blocks
  * ({@link EntityTrackerSystems.EntityViewer#viewRadiusBlocks}).
  *
- * <p>Both writes also lower what the live getters report, so the player's real ceiling can't be read
+ * Both writes also lower what the live getters report, so the player's real ceiling can't be read
  * back once we shrink. We remember the first (highest) value seen per player and ramp toward that.
  */
 public final class ClientViewRadiusController {
@@ -110,11 +110,14 @@ public final class ClientViewRadiusController {
         }
 
         PlayerState state = stateFor(playerRef.getUuid());
-        Density density = sampleDensity(playerRef, world, config.densityScanChunkRadius);
+        Density density = sampleDensity(playerRef, world, config);
         double smoothed = density.valid() ? smooth(state, density.perChunk()) : -1;
-        double frac = density.valid() ? pass.shrinkFraction(smoothed) : 0.0D;
-        String reason = !density.valid() ? "no-sample"
-                : frac <= 0 ? "open" : (frac >= 1 ? "density-min" : "density");
+        ChunkTracker tracker = playerRef.getChunkTracker();
+        double densityFrac = density.valid() ? pass.shrinkFraction(smoothed) : 0.0D;
+        double chunkLoadFrac = chunkLoadShrinkFraction(tracker, config);
+        double frac = combinedShrinkFraction(densityFrac, chunkLoadFrac, config.baselineShrinkFraction);
+        String reason = shrinkReason(density.valid(), frac, densityFrac, chunkLoadFrac,
+                config.baselineShrinkFraction);
 
         // Chunk view radius.
         int chunkCurrent = player.getClientViewRadius();
@@ -122,7 +125,6 @@ public final class ClientViewRadiusController {
         int chunkTarget = scale(chunkBase, config.minClientViewRadius, frac);
         boolean chunkApplied = false;
         boolean chunkHeld = false;
-        ChunkTracker tracker = playerRef.getChunkTracker();
         if (chunkTarget < chunkCurrent && isStreaming(tracker)) {
             chunkHeld = true;
         } else if (Math.abs(chunkTarget - chunkCurrent) >= config.minViewRadiusDelta) {
@@ -189,7 +191,7 @@ public final class ClientViewRadiusController {
     }
 
     /** Counts entities in the chunks around a player as a stand-in for client render cost. */
-    private static Density sampleDensity(PlayerRef ref, World world, int chunkRadius) {
+    private Density sampleDensity(PlayerRef ref, World world, QuantumHyConfig cfg) {
         Transform transform = ref.getTransform();
         if (transform == null || transform.getPosition() == null || world == null || !world.isAlive()) {
             return Density.NONE;
@@ -200,10 +202,11 @@ public final class ClientViewRadiusController {
         }
         int centerX = ChunkUtil.chunkCoordinate(transform.getPosition().x);
         int centerZ = ChunkUtil.chunkCoordinate(transform.getPosition().z);
-        int radius = Math.max(0, chunkRadius);
+        int radius = Math.max(0, cfg.densityScanChunkRadius);
         int radiusSq = radius * radius;
 
-        int entities = 0;
+        int rawEntities = 0;
+        double weightedEntities = 0;
         int chunks = 0;
         for (int dz = -radius; dz <= radius; dz++) {
             int dzSq = dz * dz;
@@ -218,15 +221,87 @@ public final class ClientViewRadiusController {
                 }
                 chunks++;
                 EntityChunk entityChunk = worldChunk.getEntityChunk();
-                if (entityChunk != null) {
-                    var refs = entityChunk.getEntityReferences();
-                    if (refs != null) {
-                        entities += refs.size();
-                    }
+                if (entityChunk == null) {
+                    continue;
                 }
+                var refs = entityChunk.getEntityReferences();
+                if (refs == null || refs.isEmpty()) {
+                    continue;
+                }
+                int count = refs.size();
+                rawEntities += count;
+                double ringWeight = 1.0D;
+                if (cfg.densityRingWeighting && radius > 0) {
+                    double dist = Math.sqrt((double) dx * dx + (double) dz * dz);
+                    double t = Math.min(1.0D, dist / radius);
+                    ringWeight = 1.0D - t * (1.0D - cfg.densityRingEdgeWeight);
+                }
+                weightedEntities += count * ringWeight;
             }
         }
-        return new Density(entities, chunks);
+        return new Density(rawEntities, weightedEntities, chunks);
+    }
+
+    private static double chunkLoadShrinkFraction(@Nullable ChunkTracker tracker, QuantumHyConfig cfg) {
+        if (!cfg.chunkLoadShrinkEnabled || tracker == null) {
+            return 0.0D;
+        }
+        int signal = tracker.getLoadedChunksCount() + tracker.getLoadingChunksCount();
+        return smoothstepShrink(signal, cfg.chunkLoadLowChunks, cfg.chunkLoadHighChunks);
+    }
+
+    private static double combinedShrinkFraction(double densityFrac, double chunkLoadFrac, double baseline) {
+        double frac = Math.max(densityFrac, chunkLoadFrac);
+        if (baseline > 0) {
+            frac = Math.max(frac, baseline);
+        }
+        return Math.min(1.0D, frac);
+    }
+
+    private static double smoothstepShrink(double value, double low, double high) {
+        if (value <= low) {
+            return 0.0D;
+        }
+        if (value >= high) {
+            return 1.0D;
+        }
+        double t = (value - low) / (high - low);
+        return t * t * (3.0D - 2.0D * t);
+    }
+
+    private static String shrinkReason(boolean valid, double frac, double densityFrac,
+            double chunkLoadFrac, double baseline) {
+        if (!valid) {
+            return "no-sample";
+        }
+        if (frac <= 0) {
+            return "open";
+        }
+        if (frac >= 1) {
+            return "min";
+        }
+        boolean d = densityFrac >= frac - 1e-6;
+        boolean c = chunkLoadFrac >= frac - 1e-6;
+        boolean b = baseline >= frac - 1e-6;
+        if (d && c) {
+            return "density+chunk-load";
+        }
+        if (d && b) {
+            return "density+baseline";
+        }
+        if (c && b) {
+            return "chunk-load+baseline";
+        }
+        if (d) {
+            return "density";
+        }
+        if (c) {
+            return "chunk-load";
+        }
+        if (b) {
+            return "baseline";
+        }
+        return "blend";
     }
 
     /** Chunk base to ramp toward in the open: the hard cap if set, else the player's own ceiling. */
@@ -299,15 +374,19 @@ public final class ClientViewRadiusController {
         boolean hasSmoothed;
     }
 
-    private record Density(int entities, int chunks) {
-        static final Density NONE = new Density(-1, 0);
+    private record Density(int rawEntities, double weightedEntities, int chunks) {
+        static final Density NONE = new Density(-1, 0, 0);
 
         boolean valid() {
-            return entities >= 0;
+            return rawEntities >= 0;
+        }
+
+        int entities() {
+            return rawEntities;
         }
 
         double perChunk() {
-            return chunks <= 0 ? 0.0D : (double) entities / chunks;
+            return chunks <= 0 ? 0.0D : weightedEntities / chunks;
         }
     }
 }

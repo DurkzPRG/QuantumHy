@@ -55,14 +55,20 @@ public class QuantumHyPlugin extends JavaPlugin {
 
         String configDump = String.format(java.util.Locale.ROOT,
                 "QuantumHy %s setup. config: verboseLog=%s tickInterval=%ds initialDelay=%ds hardCap=%d min=%d "
-                        + "max=%d scan=%d densityLow=%.1f/ch densityHigh=%.1f/ch smoothing=%.2f adaptEntity=%s "
+                        + "max=%d scan=%d densityLow=%.1f/ch densityHigh=%.1f/ch ringWeight=%s baseline=%.0f%% "
+                        + "chunkLoadShrink=%s smoothing=%.2f adaptEntity=%s "
                         + "minEntityBlocks=%d entityLod=%.2fx vCull=%s entityCap=%s spawnHold=%s minDelta=%d streamGrace=%s "
                         + "backlog>=%d smoothStreaming=%s maxChunks/s=%d maxChunks/tick=%d leanCoreTakeover=%s yield=%s "
                         + "pressureGov=%s msptEnter=%.0f effects=%s worldLevers=%s",
                 getManifest().getVersion(), config.verboseLog, config.tickIntervalSeconds,
                 config.initialDelaySeconds, config.targetClientViewRadius, config.minClientViewRadius,
                 config.maxClientViewRadius, config.densityScanChunkRadius, config.densityLowPerChunk,
-                config.densityHighPerChunk, config.densitySmoothing, config.adaptEntityRadius,
+                config.densityHighPerChunk,
+                config.densityRingWeighting ? String.format(java.util.Locale.ROOT, "edge=%.2f",
+                        config.densityRingEdgeWeight) : "off",
+                config.baselineShrinkFraction * 100.0D,
+                config.chunkLoadShrinkEnabled ? config.chunkLoadLowChunks + "-" + config.chunkLoadHighChunks : "off",
+                config.densitySmoothing, config.adaptEntityRadius,
                 config.minEntityViewBlocks, config.entityLodAggressiveness,
                 config.maxEntityVerticalDistance > 0 ? config.maxEntityVerticalDistance + "b" : "off",
                 config.maxVisibleEntitiesPerPlayer > 0 ? String.valueOf(config.maxVisibleEntitiesPerPlayer) : "off",

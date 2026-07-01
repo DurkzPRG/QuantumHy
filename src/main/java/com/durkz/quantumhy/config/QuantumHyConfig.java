@@ -2,16 +2,22 @@ package com.durkz.quantumhy.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.hypixel.hytale.logger.HytaleLogger;
+
+import javax.annotation.Nullable;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.logging.Level;
 
 /**
@@ -21,6 +27,9 @@ import java.util.logging.Level;
 public class QuantumHyConfig {
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    /** Bumped when shipped defaults change; older QuantumHy.json files migrate on load. */
+    private static final int CURRENT_CONFIG_VERSION = 2;
 
     private transient File configFile;
 
@@ -56,10 +65,37 @@ public class QuantumHyConfig {
      * Local density is entities per loaded chunk in the scan area. At or below this, the radius is
      * allowed back up to the base. A normal world idles around 1 to 1.5 entities per chunk.
      */
-    public double densityLowPerChunk = 2.0D;
+    public double densityLowPerChunk = 1.0D;
 
     /** At or above this entities-per-chunk, the radius is pulled all the way down to the minimum. */
-    public double densityHighPerChunk = 8.0D;
+    public double densityHighPerChunk = 4.0D;
+
+    /**
+     * Weight entities in outer scan rings less than the center chunk (no per-species tables). Closer
+     * crowds drive shrink; edge-of-scan ambient counts a bit less toward the signal.
+     */
+    public boolean densityRingWeighting = true;
+
+    /** Ring weight at the scan edge when {@link #densityRingWeighting} is on (1.0 = flat count). */
+    public double densityRingEdgeWeight = 0.55D;
+
+    /**
+     * Minimum shrink fraction even when density is "open". Keeps a light trim in normal exploration
+     * instead of sitting at full radius until a mob pile. {@code 0} disables the floor.
+     */
+    public double baselineShrinkFraction = 0.10D;
+
+    /**
+     * Extra shrink from how many chunks are loaded or still streaming to this client (render backlog).
+     * Separate from LeanCore hot/sim radius and throughput governance.
+     */
+    public boolean chunkLoadShrinkEnabled = true;
+
+    /** Loaded + loading chunk count at or below this adds no chunk-load shrink. */
+    public int chunkLoadLowChunks = 48;
+
+    /** At or above this loaded + loading count, chunk-load shrink hits full strength. */
+    public int chunkLoadHighChunks = 112;
 
     /**
      * Smoothing for the density signal: weight of the newest sample in an exponential moving average,
@@ -83,7 +119,7 @@ public class QuantumHyConfig {
      * entities sooner (e.g. {@code 1.5} drops them at ~80% of the default distance). Server-wide, not
      * per player, applied once at startup and restored on shutdown.
      */
-    public double entityLodAggressiveness = 1.5D;
+    public double entityLodAggressiveness = 2.0D;
 
     /**
      * Stop streaming entities that are too far above or below the player, in blocks. The engine sends
@@ -92,7 +128,7 @@ public class QuantumHyConfig {
      * {@code 0} turns the vertical cut off. 40 keeps normal surface play untouched while cutting the
      * cave and ceiling crowds that the client would otherwise render for nothing.
      */
-    public int maxEntityVerticalDistance = 40;
+    public int maxEntityVerticalDistance = 32;
 
     /**
      * Hard ceiling on how many entities the server streams to one client at once. In a crowd past
@@ -100,7 +136,7 @@ public class QuantumHyConfig {
      * players are never trimmed. {@code 0} turns the cap off (the adaptive entity radius and LOD still
      * apply). Set it to protect FPS in dense mob pile-ups on lower-end machines.
      */
-    public int maxVisibleEntitiesPerPlayer = 0;
+    public int maxVisibleEntitiesPerPlayer = 80;
 
     /**
      * Pause environmental spawning while any player has chunks streaming to the client
@@ -147,19 +183,19 @@ public class QuantumHyConfig {
     public boolean pressureGovernorEnabled = true;
 
     /** MSPT (10s average) at or above this for {@link #pressureSustainSeconds} enters pressure mode. */
-    public double pressureMsptEnter = 52.0D;
+    public double pressureMsptEnter = 48.0D;
 
     /** MSPT at or below this for {@link #pressureCooldownSeconds} exits pressure mode. */
-    public double pressureMsptExit = 47.0D;
+    public double pressureMsptExit = 43.0D;
 
     /** Seconds MSPT must stay at/above {@link #pressureMsptEnter} before levers tighten. */
-    public int pressureSustainSeconds = 6;
+    public int pressureSustainSeconds = 4;
 
     /** Seconds MSPT must stay at/below {@link #pressureMsptExit} before levers restore. */
     public int pressureCooldownSeconds = 15;
 
     /** Under pressure, density thresholds tighten by this factor (higher = more shrink). */
-    public double pressureDensityMultiplier = 1.35D;
+    public double pressureDensityMultiplier = 1.45D;
 
     /** Under pressure, multiply {@link #maxChunksPerSecond} and {@link #maxChunksPerTick}. */
     public double pressureChunkRateMultiplier = 0.75D;
@@ -182,6 +218,15 @@ public class QuantumHyConfig {
     /** Multiplier applied to bloom/sunshaft intensities while {@link #pressureTrimClientEffects} is active. */
     public double pressureEffectScale = 0.5D;
 
+    /**
+     * Config schema version written to QuantumHy.json. {@code 0} means legacy (pre-versioning).
+     * Gson runs the no-arg constructor before overlaying JSON, so this must not default to
+     * {@link #CURRENT_CONFIG_VERSION} or old files without the key would skip migration.
+     */
+    public int configVersion = 0;
+
+    private transient List<String> lastMigrationNotes = List.of();
+
     public static QuantumHyConfig load(Path dataDirectory) {
         File directory = dataDirectory.toFile();
         if (!directory.exists()) {
@@ -193,15 +238,29 @@ public class QuantumHyConfig {
         config.configFile = file;
 
         if (!file.exists()) {
+            config.configVersion = CURRENT_CONFIG_VERSION;
             config.save();
             return config;
         }
 
-        try (Reader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
-            QuantumHyConfig loaded = GSON.fromJson(reader, QuantumHyConfig.class);
+        try {
+            String raw = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            QuantumHyConfig loaded = GSON.fromJson(raw, QuantumHyConfig.class);
             if (loaded != null) {
                 loaded.configFile = file;
+                JsonObject root = parseRoot(raw);
+                boolean migrated = loaded.migrateIfNeeded(root);
                 loaded.applyDefaults();
+                if (migrated) {
+                    loaded.save();
+                    try {
+                        HytaleLogger.getLogger().at(Level.INFO).log(
+                                "QuantumHy config migrated to version %d: %s",
+                                CURRENT_CONFIG_VERSION, String.join(", ", loaded.lastMigrationNotes));
+                    } catch (RuntimeException | LinkageError ignored) {
+                        // Logger may be unavailable in unit tests.
+                    }
+                }
                 return loaded;
             }
         } catch (Exception ignored) {
@@ -209,6 +268,7 @@ public class QuantumHyConfig {
         }
 
         config.applyDefaults();
+        config.configVersion = CURRENT_CONFIG_VERSION;
         return config;
     }
 
@@ -222,6 +282,109 @@ public class QuantumHyConfig {
             Files.move(file.toPath(), corrupt, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException ignored) {
         }
+    }
+
+    private static JsonObject parseRoot(String raw) {
+        try {
+            return JsonParser.parseString(raw).getAsJsonObject();
+        } catch (RuntimeException ignored) {
+            return new JsonObject();
+        }
+    }
+
+    /**
+     * Rewrites 0.2.0-era defaults and fills keys added in 0.2.1. Compares loaded field values
+     * (not raw JSON gates) so a partial v1 migration can be repaired on v2.
+     */
+    private boolean migrateIfNeeded(@Nullable JsonObject root) {
+        JsonObject json = root == null ? new JsonObject() : root;
+        if (json.has("configVersion") && configVersion >= CURRENT_CONFIG_VERSION) {
+            return false;
+        }
+        List<String> notes = new ArrayList<>();
+        boolean changed = false;
+
+        changed |= remapDouble(notes, "densityLowPerChunk", densityLowPerChunk, 2.0D, 1.0D,
+                v -> densityLowPerChunk = v);
+        changed |= remapDouble(notes, "densityHighPerChunk", densityHighPerChunk, 8.0D, 4.0D,
+                v -> densityHighPerChunk = v);
+        changed |= remapDouble(notes, "entityLodAggressiveness", entityLodAggressiveness, 1.5D, 2.0D,
+                v -> entityLodAggressiveness = v);
+        changed |= remapInt(notes, "maxEntityVerticalDistance", maxEntityVerticalDistance, 40, 32,
+                v -> maxEntityVerticalDistance = v);
+        changed |= remapInt(notes, "maxVisibleEntitiesPerPlayer", maxVisibleEntitiesPerPlayer, 0, 80,
+                v -> maxVisibleEntitiesPerPlayer = v);
+        changed |= remapDouble(notes, "pressureMsptEnter", pressureMsptEnter, 52.0D, 48.0D,
+                v -> pressureMsptEnter = v);
+        changed |= remapDouble(notes, "pressureMsptExit", pressureMsptExit, 47.0D, 43.0D,
+                v -> pressureMsptExit = v);
+        changed |= remapInt(notes, "pressureSustainSeconds", pressureSustainSeconds, 6, 4,
+                v -> pressureSustainSeconds = v);
+        changed |= remapDouble(notes, "pressureDensityMultiplier", pressureDensityMultiplier, 1.35D, 1.45D,
+                v -> pressureDensityMultiplier = v);
+
+        if (!json.has("densityRingWeighting")) {
+            densityRingWeighting = true;
+            changed = true;
+            notes.add("densityRingWeighting=true");
+        }
+        if (!json.has("densityRingEdgeWeight") || densityRingEdgeWeight <= 0) {
+            densityRingEdgeWeight = 0.55D;
+            changed = true;
+            notes.add("densityRingEdgeWeight=0.55");
+        }
+        if (!json.has("baselineShrinkFraction")) {
+            baselineShrinkFraction = 0.10D;
+            changed = true;
+            notes.add("baselineShrinkFraction=0.10");
+        }
+        if (!json.has("chunkLoadShrinkEnabled")) {
+            chunkLoadShrinkEnabled = true;
+            changed = true;
+            notes.add("chunkLoadShrinkEnabled=true");
+        }
+        if (!json.has("chunkLoadLowChunks") || chunkLoadLowChunks <= 0) {
+            chunkLoadLowChunks = 48;
+            changed = true;
+            notes.add("chunkLoadLowChunks=48");
+        }
+        if (!json.has("chunkLoadHighChunks") || chunkLoadHighChunks <= 0) {
+            chunkLoadHighChunks = 112;
+            changed = true;
+            notes.add("chunkLoadHighChunks=112");
+        }
+
+        if (configVersion != CURRENT_CONFIG_VERSION) {
+            notes.add(String.format(Locale.ROOT, "configVersion %d->%d", configVersion, CURRENT_CONFIG_VERSION));
+            configVersion = CURRENT_CONFIG_VERSION;
+            changed = true;
+        }
+        lastMigrationNotes = List.copyOf(notes);
+        return changed;
+    }
+
+    private static boolean remapDouble(List<String> notes, String name, double current, double oldDefault,
+            double newDefault, java.util.function.DoubleConsumer setter) {
+        if (!near(current, oldDefault)) {
+            return false;
+        }
+        setter.accept(newDefault);
+        notes.add(String.format(Locale.ROOT, "%s %.4g->%.4g", name, oldDefault, newDefault));
+        return true;
+    }
+
+    private static boolean remapInt(List<String> notes, String name, int current, int oldDefault, int newDefault,
+            java.util.function.IntConsumer setter) {
+        if (current != oldDefault) {
+            return false;
+        }
+        setter.accept(newDefault);
+        notes.add(String.format(Locale.ROOT, "%s %d->%d", name, oldDefault, newDefault));
+        return true;
+    }
+
+    private static boolean near(double a, double b) {
+        return Double.isFinite(a) && Math.abs(a - b) < 1e-9;
     }
 
     private void applyDefaults() {
@@ -248,6 +411,21 @@ public class QuantumHyConfig {
         }
         if (densityHighPerChunk <= densityLowPerChunk) {
             densityHighPerChunk = densityLowPerChunk + 1;
+        }
+        if (densityRingEdgeWeight <= 0 || densityRingEdgeWeight > 1.0D) {
+            densityRingEdgeWeight = 0.55D;
+        }
+        if (baselineShrinkFraction < 0 || baselineShrinkFraction > 1.0D) {
+            baselineShrinkFraction = 0.10D;
+        }
+        if (chunkLoadHighChunks <= 0) {
+            chunkLoadHighChunks = 112;
+        }
+        if (chunkLoadLowChunks < 0) {
+            chunkLoadLowChunks = 48;
+        }
+        if (chunkLoadLowChunks >= chunkLoadHighChunks) {
+            chunkLoadLowChunks = Math.max(0, chunkLoadHighChunks / 2);
         }
         if (densitySmoothing <= 0 || densitySmoothing > 1) {
             densitySmoothing = 1.0D;
@@ -277,7 +455,7 @@ public class QuantumHyConfig {
             maxChunksPerTick = 0;
         }
         if (pressureMsptEnter <= 0) {
-            pressureMsptEnter = 52.0D;
+            pressureMsptEnter = 48.0D;
         }
         if (pressureMsptExit <= 0 || pressureMsptExit >= pressureMsptEnter) {
             pressureMsptExit = Math.max(1.0D, pressureMsptEnter - 5.0D);
@@ -302,6 +480,9 @@ public class QuantumHyConfig {
         }
         if (pressureEffectScale <= 0 || pressureEffectScale > 1.0D) {
             pressureEffectScale = 0.5D;
+        }
+        if (configVersion < 0) {
+            configVersion = 0;
         }
     }
 

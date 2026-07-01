@@ -15,7 +15,11 @@ import javax.annotation.Nullable;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Watches real per-world MSPT from {@link World#getBufferedTickLengthMetricSet()} and, after
@@ -205,25 +209,30 @@ public final class PressureGovernor {
         EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO = ratio;
     }
 
-    /** Restore every pressured world. Blocks briefly per world so config levers actually revert. */
+    /** Restore every pressured world in parallel (same 2s budget total, not per world). */
     public void shutdown(@Nonnull QuantumHyConfig config) {
         var universe = com.hypixel.hytale.server.core.universe.Universe.get();
+        List<CompletableFuture<Void>> pending = new ArrayList<>();
         for (Map.Entry<UUID, WorldState> entry : worlds.entrySet()) {
             World world = universe.getWorld(entry.getKey());
             if (world == null || !world.isAlive() || entry.getValue().tier != Tier.PRESSURED) {
                 continue;
             }
             WorldState state = entry.getValue();
+            CompletableFuture<Void> done = new CompletableFuture<>();
+            world.execute(() -> {
+                release(world, config, state, "shutdown");
+                done.complete(null);
+            });
+            pending.add(done);
+        }
+        if (!pending.isEmpty()) {
             try {
-                var done = new java.util.concurrent.CompletableFuture<Void>();
-                world.execute(() -> {
-                    release(world, config, state, "shutdown");
-                    done.complete(null);
-                });
-                done.get(2, java.util.concurrent.TimeUnit.SECONDS);
+                CompletableFuture.allOf(pending.toArray(new CompletableFuture[0]))
+                        .get(2, TimeUnit.SECONDS);
             } catch (Exception ex) {
                 logger.atWarning().withCause(ex).log(
-                        "pressure restore timed out for world %s", world.getName());
+                        "pressure restore timed out for one or more worlds");
             }
         }
         worlds.clear();

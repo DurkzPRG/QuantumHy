@@ -21,9 +21,10 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -141,24 +142,52 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
     /** Keeps the {@code cap} nearest non-player entities, dropping the farthest ones over the cap. */
     private void capToNearest(@Nonnull EntityTrackerSystems.EntityViewer viewer, @Nonnull org.joml.Vector3d position,
                               int cap, @Nonnull CommandBuffer<EntityStore> commandBuffer, @Nonnull String worldName) {
-        final List<Candidate> candidates = new ArrayList<>(viewer.visible.size());
-        for (final Ref<EntityStore> ref : viewer.visible) {
-            if (!ref.isValid() || commandBuffer.getArchetype(ref).contains(playerRefComponentType)) continue;
-            final var targetTransform = commandBuffer.getComponent(ref, TransformComponent.getComponentType());
-            if (targetTransform == null) continue;
-            candidates.add(new Candidate(ref, targetTransform.getPosition().distanceSquared(position)));
-        }
-
         int over = viewer.visible.size() - cap;
-        if (over <= 0 || candidates.isEmpty()) {
+        if (over <= 0) {
             return;
         }
-        candidates.sort((a, b) -> Double.compare(b.distanceSq, a.distanceSq));
-        for (int i = 0; i < candidates.size() && over > 0; i++) {
-            if (viewer.visible.remove(candidates.get(i).ref)) {
-                over--;
-                recordCapCull(worldName);
+
+        // Max-heap of the cap nearest: head is the farthest among the kept set.
+        PriorityQueue<Candidate> nearest = new PriorityQueue<>(cap,
+                (a, b) -> Double.compare(b.distanceSq, a.distanceSq));
+        for (final Ref<EntityStore> ref : viewer.visible) {
+            if (!ref.isValid() || commandBuffer.getArchetype(ref).contains(playerRefComponentType)) {
+                continue;
             }
+            final var targetTransform = commandBuffer.getComponent(ref, TransformComponent.getComponentType());
+            if (targetTransform == null) {
+                continue;
+            }
+            double distSq = targetTransform.getPosition().distanceSquared(position);
+            if (nearest.size() < cap) {
+                nearest.add(new Candidate(ref, distSq));
+            } else if (distSq < nearest.peek().distanceSq) {
+                nearest.poll();
+                nearest.add(new Candidate(ref, distSq));
+            }
+        }
+        if (nearest.isEmpty()) {
+            return;
+        }
+
+        Set<Ref<EntityStore>> keep = new HashSet<>(nearest.size());
+        for (Candidate candidate : nearest) {
+            keep.add(candidate.ref);
+        }
+
+        int culled = 0;
+        for (final var iterator = viewer.visible.iterator(); iterator.hasNext(); ) {
+            final Ref<EntityStore> ref = iterator.next();
+            if (!ref.isValid() || commandBuffer.getArchetype(ref).contains(playerRefComponentType)) {
+                continue;
+            }
+            if (!keep.contains(ref)) {
+                iterator.remove();
+                culled++;
+            }
+        }
+        for (int i = 0; i < culled; i++) {
+            recordCapCull(worldName);
         }
     }
 

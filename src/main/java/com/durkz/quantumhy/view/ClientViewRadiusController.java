@@ -221,7 +221,13 @@ public final class ClientViewRadiusController {
         if (perChunk >= high) {
             return 1.0D;
         }
-        return (perChunk - low) / (high - low);
+        double t = (perChunk - low) / (high - low);
+        return smoothstep(t);
+    }
+
+    /** Classic smoothstep: zero derivative at both ends of the unit interval. */
+    private static double smoothstep(double t) {
+        return t * t * (3.0D - 2.0D * t);
     }
 
     /** Chunk base to ramp toward in the open: the hard cap if set, else the player's own ceiling. */

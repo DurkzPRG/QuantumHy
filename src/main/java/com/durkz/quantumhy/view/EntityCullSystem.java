@@ -22,7 +22,7 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.Collections;
-import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.PriorityQueue;
 import java.util.Set;
@@ -48,6 +48,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
     private final QuantumHyConfig config;
     private final ComponentType<EntityStore, EntityTrackerSystems.EntityViewer> entityViewerComponentType;
     private final ComponentType<EntityStore, PlayerRef> playerRefComponentType;
+    private final ComponentType<EntityStore, TransformComponent> transformComponentType;
     private final Query<EntityStore> query;
     private final Set<Dependency<EntityStore>> dependencies;
 
@@ -56,6 +57,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         this.config = config;
         this.entityViewerComponentType = entityViewerComponentType;
         this.playerRefComponentType = PlayerRef.getComponentType();
+        this.transformComponentType = TransformComponent.getComponentType();
         this.query = Query.and(entityViewerComponentType, TransformComponent.getComponentType());
         this.dependencies = Collections.singleton(
                 new SystemDependency<>(Order.AFTER, EntityTrackerSystems.CollectVisible.class));
@@ -95,18 +97,27 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         final var transformComponent = archetypeChunk.getComponent(index, TransformComponent.getComponentType());
         assert transformComponent != null;
         final var position = transformComponent.getPosition();
+        final double py = position.y;
 
         final int maxVertical = PressureGovernor.verticalDistance(worldName, config.maxEntityVerticalDistance);
         if (maxVertical > 0) {
+            final int maxVerticalSq = maxVertical * maxVertical;
             for (final var iterator = viewer.visible.iterator(); iterator.hasNext(); ) {
                 final Ref<EntityStore> targetRef = iterator.next();
-                if (!targetRef.isValid()) continue;
-                if (commandBuffer.getArchetype(targetRef).contains(playerRefComponentType)) continue;
+                if (!targetRef.isValid()) {
+                    continue;
+                }
+                if (commandBuffer.getArchetype(targetRef).contains(playerRefComponentType)) {
+                    continue;
+                }
 
-                final var targetTransform = commandBuffer.getComponent(targetRef, TransformComponent.getComponentType());
-                if (targetTransform == null) continue;
+                final var targetTransform = commandBuffer.getComponent(targetRef, transformComponentType);
+                if (targetTransform == null) {
+                    continue;
+                }
 
-                if (Math.abs(targetTransform.getPosition().y - position.y) > maxVertical) {
+                final double dy = targetTransform.getPosition().y - py;
+                if (dy * dy > maxVerticalSq) {
                     iterator.remove();
                     recordVerticalCull(worldName);
                 }
@@ -154,7 +165,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
             if (!ref.isValid() || commandBuffer.getArchetype(ref).contains(playerRefComponentType)) {
                 continue;
             }
-            final var targetTransform = commandBuffer.getComponent(ref, TransformComponent.getComponentType());
+            final var targetTransform = commandBuffer.getComponent(ref, transformComponentType);
             if (targetTransform == null) {
                 continue;
             }
@@ -170,7 +181,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
             return;
         }
 
-        Set<Ref<EntityStore>> keep = new HashSet<>(nearest.size());
+        Set<Ref<EntityStore>> keep = Collections.newSetFromMap(new IdentityHashMap<>(nearest.size()));
         for (Candidate candidate : nearest) {
             keep.add(candidate.ref);
         }

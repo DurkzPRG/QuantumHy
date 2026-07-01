@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import javax.annotation.Nullable;
 
 /**
  * Adapts each player's render load to the entity density around them. One smoothed signal drives two
@@ -38,6 +39,7 @@ public final class ClientViewRadiusController {
 
     private final QuantumHyConfig config;
     private final Map<UUID, PlayerState> players = new ConcurrentHashMap<>();
+    private final Map<UUID, Decision> lastDecisions = new ConcurrentHashMap<>();
 
     public ClientViewRadiusController(QuantumHyConfig config) {
         this.config = config;
@@ -110,7 +112,7 @@ public final class ClientViewRadiusController {
         PlayerState state = stateFor(playerRef.getUuid());
         Density density = sampleDensity(playerRef, world, config.densityScanChunkRadius);
         double smoothed = density.valid() ? smooth(state, density.perChunk()) : -1;
-        double frac = density.valid() ? shrinkFraction(smoothed, pass) : 0.0D;
+        double frac = density.valid() ? pass.shrinkFraction(smoothed) : 0.0D;
         String reason = !density.valid() ? "no-sample"
                 : frac <= 0 ? "open" : (frac >= 1 ? "density-min" : "density");
 
@@ -120,7 +122,8 @@ public final class ClientViewRadiusController {
         int chunkTarget = scale(chunkBase, config.minClientViewRadius, frac);
         boolean chunkApplied = false;
         boolean chunkHeld = false;
-        if (chunkTarget < chunkCurrent && isStreaming(playerRef)) {
+        ChunkTracker tracker = playerRef.getChunkTracker();
+        if (chunkTarget < chunkCurrent && isStreaming(tracker)) {
             chunkHeld = true;
         } else if (Math.abs(chunkTarget - chunkCurrent) >= config.minViewRadiusDelta) {
             player.setClientViewRadius(chunkTarget);
@@ -146,23 +149,29 @@ public final class ClientViewRadiusController {
             }
         }
 
-        applyChunkStreamingSmoothing(playerRef, pass);
+        applyChunkStreamingSmoothing(tracker, pass);
 
-        return new Decision(name, density.entities(), density.chunks(), smoothed,
+        Decision decision = new Decision(name, density.entities(), density.chunks(), smoothed,
                 chunkCurrent, chunkTarget, chunkApplied, chunkHeld, entCurrent, entTarget, entApplied,
                 lodExcluded, reason);
+        UUID playerId = playerRef.getUuid();
+        if (playerId != null) {
+            lastDecisions.put(playerId, decision);
+        }
+        return decision;
+    }
+
+    @Nullable
+    public Decision lastDecision(@Nullable UUID playerId) {
+        return playerId == null ? null : lastDecisions.get(playerId);
     }
 
     /**
      * Caps how fast chunks stream to this client, so a freshly opened radius arrives spread out
      * instead of as one burst the client has to mesh at once. Idempotent: only writes on change.
      */
-    private void applyChunkStreamingSmoothing(PlayerRef playerRef, ViewPassContext pass) {
-        if (!LeanCoreBridge.shouldQuantumHyWriteChunkRate(config)) {
-            return;
-        }
-        ChunkTracker tracker = playerRef.getChunkTracker();
-        if (tracker == null) {
+    private void applyChunkStreamingSmoothing(@Nullable ChunkTracker tracker, ViewPassContext pass) {
+        if (!LeanCoreBridge.shouldQuantumHyWriteChunkRate(config) || tracker == null) {
             return;
         }
         if (pass.maxChunksPerSecond() > 0 && tracker.getMaxChunksPerSecond() != pass.maxChunksPerSecond()) {
@@ -176,6 +185,7 @@ public final class ClientViewRadiusController {
     /** Drop cached state for players no longer online, so the map can't grow without bound. */
     public void retain(Set<UUID> online) {
         players.keySet().retainAll(online);
+        lastDecisions.keySet().retainAll(online);
     }
 
     /** Counts entities in the chunks around a player as a stand-in for client render cost. */
@@ -191,11 +201,16 @@ public final class ClientViewRadiusController {
         int centerX = ChunkUtil.chunkCoordinate(transform.getPosition().x);
         int centerZ = ChunkUtil.chunkCoordinate(transform.getPosition().z);
         int radius = Math.max(0, chunkRadius);
+        int radiusSq = radius * radius;
 
         int entities = 0;
         int chunks = 0;
-        for (int dx = -radius; dx <= radius; dx++) {
-            for (int dz = -radius; dz <= radius; dz++) {
+        for (int dz = -radius; dz <= radius; dz++) {
+            int dzSq = dz * dz;
+            for (int dx = -radius; dx <= radius; dx++) {
+                if (dx * dx + dzSq > radiusSq) {
+                    continue;
+                }
                 long index = ChunkUtil.indexChunk(centerX + dx, centerZ + dz);
                 WorldChunk worldChunk = chunkStore.getChunkComponent(index, WorldChunk.getComponentType());
                 if (worldChunk == null) {
@@ -203,31 +218,15 @@ public final class ClientViewRadiusController {
                 }
                 chunks++;
                 EntityChunk entityChunk = worldChunk.getEntityChunk();
-                if (entityChunk != null && entityChunk.getEntityReferences() != null) {
-                    entities += entityChunk.getEntityReferences().size();
+                if (entityChunk != null) {
+                    var refs = entityChunk.getEntityReferences();
+                    if (refs != null) {
+                        entities += refs.size();
+                    }
                 }
             }
         }
         return new Density(entities, chunks);
-    }
-
-    /** 0 at or below the low threshold (no shrink), 1 at or above the high threshold (full shrink). */
-    private double shrinkFraction(double perChunk, ViewPassContext pass) {
-        double low = pass.densityLowPerChunk();
-        double high = pass.densityHighPerChunk();
-        if (perChunk <= low) {
-            return 0.0D;
-        }
-        if (perChunk >= high) {
-            return 1.0D;
-        }
-        double t = (perChunk - low) / (high - low);
-        return smoothstep(t);
-    }
-
-    /** Classic smoothstep: zero derivative at both ends of the unit interval. */
-    private static double smoothstep(double t) {
-        return t * t * (3.0D - 2.0D * t);
     }
 
     /** Chunk base to ramp toward in the open: the hard cap if set, else the player's own ceiling. */
@@ -266,12 +265,10 @@ public final class ClientViewRadiusController {
         return next;
     }
 
-    private boolean isStreaming(PlayerRef playerRef) {
-        if (!config.respectStreamingGrace) {
-            return false;
-        }
-        ChunkTracker tracker = playerRef.getChunkTracker();
-        return tracker != null && tracker.getLoadingChunksCount() >= config.streamingBacklogThreshold;
+    private boolean isStreaming(@Nullable ChunkTracker tracker) {
+        return config.respectStreamingGrace
+                && tracker != null
+                && tracker.getLoadingChunksCount() >= config.streamingBacklogThreshold;
     }
 
     private static int scale(int base, int min, double frac) {

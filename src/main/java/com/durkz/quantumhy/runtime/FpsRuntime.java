@@ -7,6 +7,7 @@ import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.ClientViewRadiusController;
 import com.durkz.quantumhy.view.EntityCullSystem;
+import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -44,6 +46,16 @@ public final class FpsRuntime {
 
     private boolean leanCoreHandled;
     private int leanCoreAttempts;
+
+    /** Reused each tick to avoid allocating maps/lists on the 5s cold path. */
+    private final Map<UUID, List<PlayerRef>> worldScratch = new HashMap<>();
+    private final Set<UUID> onlineScratch = new HashSet<>();
+    private final ArrayList<List<PlayerRef>> listPool = new ArrayList<>();
+
+    private final ConcurrentHashMap<UUID, RuntimeSnapshot.PlayerRow> playerSnapshotScratch = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RuntimeSnapshot.WorldRow> worldSnapshotScratch = new ConcurrentHashMap<>();
+    private volatile RuntimeSnapshot snapshot = RuntimeSnapshot.EMPTY;
+    private volatile int lastOnlineCount;
 
     public FpsRuntime(QuantumHyPlugin plugin, QuantumHyConfig config) {
         this.plugin = plugin;
@@ -139,11 +151,13 @@ public final class FpsRuntime {
             ensureLeanCoreCoexistence();
             Collection<PlayerRef> online = Universe.get().getPlayers();
             if (online == null || online.isEmpty()) {
+                snapshot = RuntimeSnapshot.EMPTY;
                 return;
             }
 
-            Map<UUID, List<PlayerRef>> byWorld = new HashMap<>();
-            Set<UUID> onlineIds = new HashSet<>();
+            onlineScratch.clear();
+            worldScratch.clear();
+
             for (PlayerRef ref : online) {
                 if (ref == null || !ref.isValid()) {
                     continue;
@@ -154,21 +168,30 @@ public final class FpsRuntime {
                 }
                 UUID playerId = ref.getUuid();
                 if (playerId != null) {
-                    onlineIds.add(playerId);
+                    onlineScratch.add(playerId);
                 }
-                byWorld.computeIfAbsent(worldUuid, ignored -> new ArrayList<>()).add(ref);
+                worldScratch.computeIfAbsent(worldUuid, ignored -> borrowList()).add(ref);
             }
-            controller.retain(onlineIds);
+            controller.retain(onlineScratch);
+            playerSnapshotScratch.keySet().retainAll(onlineScratch);
+            lastOnlineCount = onlineScratch.size();
 
-            for (Map.Entry<UUID, List<PlayerRef>> entry : byWorld.entrySet()) {
+            for (Map.Entry<UUID, List<PlayerRef>> entry : worldScratch.entrySet()) {
                 World world = Universe.get().getWorld(entry.getKey());
                 if (world == null || !world.isAlive()) {
                     continue;
                 }
                 UUID worldUuid = entry.getKey();
-                List<PlayerRef> batch = List.copyOf(entry.getValue());
-                world.execute(() -> runWorldPass(world, worldUuid, batch));
+                List<PlayerRef> batch = entry.getValue();
+                world.execute(() -> {
+                    try {
+                        runWorldPass(world, worldUuid, batch);
+                    } finally {
+                        returnList(batch);
+                    }
+                });
             }
+            worldScratch.clear();
         } catch (RuntimeException ex) {
             plugin.getLogger().atWarning().withCause(ex)
                     .log("QuantumHy tick failed: %s", ex.getClass().getSimpleName());
@@ -179,6 +202,7 @@ public final class FpsRuntime {
         if (!running) {
             return;
         }
+        String worldName = world.getName();
         PressureGovernor.Snapshot pressureSnap = pressure.update(world, config, config.tickIntervalSeconds);
         pressure.applyEntityLod(config, pressureSnap);
         PressureGovernor.ViewPassContext pass = pressure.viewContext(config, pressureSnap);
@@ -194,6 +218,7 @@ public final class FpsRuntime {
                 if (decision.applied()) {
                     changed++;
                 }
+                publishPlayerRow(ref, worldName, decision);
                 if (details != null) {
                     if (details.length() > 0) {
                         details.append(" | ");
@@ -204,6 +229,11 @@ public final class FpsRuntime {
                 plugin.getLogger().atWarning().withCause(ex).log("view radius apply failed for a player");
             }
         }
+        worldSnapshotScratch.put(worldName, new RuntimeSnapshot.WorldRow(
+                pressureSnap,
+                SpawnStreamPauseSystem.isStreamPauseActive(worldName),
+                SpawnStreamPauseSystem.poolCooledCount(worldName)));
+        publishSnapshot();
         logActionDeltas(world, pressureSnap);
 
         if (details != null) {
@@ -240,6 +270,50 @@ public final class FpsRuntime {
         return pressure;
     }
 
+    @Nonnull
+    public RuntimeSnapshot snapshot() {
+        return snapshot;
+    }
+
+    private void publishPlayerRow(@Nonnull PlayerRef ref, @Nonnull String worldName,
+                                  @Nonnull ClientViewRadiusController.Decision decision) {
+        UUID playerId = ref.getUuid();
+        if (playerId == null) {
+            return;
+        }
+        ChunkTracker tracker = ref.getChunkTracker();
+        int loaded = tracker == null ? 0 : tracker.getLoadedChunksCount();
+        int loading = tracker == null ? 0 : tracker.getLoadingChunksCount();
+        int rate = tracker == null ? 0 : tracker.getMaxChunksPerSecond();
+        playerSnapshotScratch.put(playerId, new RuntimeSnapshot.PlayerRow(
+                decision.name(), worldName, loaded, loading, rate, decision.line()));
+    }
+
+    private void publishSnapshot() {
+        if (playerSnapshotScratch.isEmpty() && worldSnapshotScratch.isEmpty()) {
+            return;
+        }
+        snapshot = new RuntimeSnapshot(
+                System.currentTimeMillis(),
+                lastOnlineCount,
+                List.copyOf(playerSnapshotScratch.values()),
+                Map.copyOf(worldSnapshotScratch));
+    }
+
+    private List<PlayerRef> borrowList() {
+        if (listPool.isEmpty()) {
+            return new ArrayList<>(8);
+        }
+        return listPool.remove(listPool.size() - 1);
+    }
+
+    private void returnList(@Nonnull List<PlayerRef> batch) {
+        batch.clear();
+        if (listPool.size() < 16) {
+            listPool.add(batch);
+        }
+    }
+
     private static String shortId(UUID uuid) {
         String text = uuid.toString();
         return text.length() >= 8 ? text.substring(0, 8) : text;
@@ -257,5 +331,8 @@ public final class FpsRuntime {
             scheduler.shutdownNow();
             scheduler = null;
         }
+        playerSnapshotScratch.clear();
+        worldSnapshotScratch.clear();
+        snapshot = RuntimeSnapshot.EMPTY;
     }
 }

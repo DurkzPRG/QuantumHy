@@ -2,7 +2,7 @@
     "Group": "durkz",
     "Name": "QuantumHy",
     "Version": "0.1.0",
-    "Description": "FPS-focused performance mod for Hytale. Adaptive per-player client view radius: trims render load in crowded areas and restores it in the open. Coexists with LeanCore.",
+    "Description": "Server-side FPS mod. Adapts each player's view and entity stream to local crowd density, smooths chunk streaming, and trims render load under real server pressure. Full radius in the open, tighter where it costs frames.",
     "Authors": [
         {
             "Name": "Durkz"

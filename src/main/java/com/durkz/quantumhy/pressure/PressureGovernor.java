@@ -75,21 +75,38 @@ public final class PressureGovernor {
             double densityLowPerChunk,
             double densityHighPerChunk,
             int maxChunksPerSecond,
-            int maxChunksPerTick
+            int maxChunksPerTick,
+            double shrinkInvRange
     ) {
         @Nonnull
         public static ViewPassContext fromConfig(@Nonnull QuantumHyConfig config) {
-            return new ViewPassContext(
-                    config.densityLowPerChunk,
-                    config.densityHighPerChunk,
-                    config.maxChunksPerSecond,
-                    config.maxChunksPerTick);
+            return of(config.densityLowPerChunk, config.densityHighPerChunk,
+                    config.maxChunksPerSecond, config.maxChunksPerTick);
+        }
+
+        @Nonnull
+        static ViewPassContext of(double low, double high, int maxChunksPerSecond, int maxChunksPerTick) {
+            double span = high - low;
+            return new ViewPassContext(low, high, maxChunksPerSecond, maxChunksPerTick,
+                    span > 0.0D ? 1.0D / span : 0.0D);
+        }
+
+        /** 0 below low threshold, 1 at or above high; smoothstep between. */
+        public double shrinkFraction(double perChunk) {
+            if (perChunk <= densityLowPerChunk) {
+                return 0.0D;
+            }
+            if (perChunk >= densityHighPerChunk) {
+                return 1.0D;
+            }
+            double t = (perChunk - densityLowPerChunk) * shrinkInvRange;
+            return t * t * (3.0D - 2.0D * t);
         }
     }
 
     public ViewPassContext viewContext(@Nonnull QuantumHyConfig config, @Nonnull Snapshot snap) {
         boolean writeChunkRate = com.durkz.quantumhy.integration.LeanCoreBridge.shouldQuantumHyWriteChunkRate(config);
-        return new ViewPassContext(
+        return ViewPassContext.of(
                 densityLowPerChunk(config, snap),
                 densityHighPerChunk(config, snap),
                 writeChunkRate ? maxChunksPerSecond(config, snap) : 0,

@@ -1,0 +1,5 @@
+# LF in the repo; Git normalizes on Windows checkout (core.autocrlf).
+* text=auto
+
+*.jar binary
+*.png binary

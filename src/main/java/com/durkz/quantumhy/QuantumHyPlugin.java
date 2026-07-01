@@ -3,6 +3,7 @@ package com.durkz.quantumhy;
 import com.durkz.quantumhy.command.QuantumCommand;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.runtime.FpsRuntime;
+import com.durkz.quantumhy.runtime.RuntimeSnapshot;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.EntityCullSystem;
 import com.hypixel.hytale.server.core.event.events.ShutdownEvent;
@@ -27,7 +28,7 @@ public class QuantumHyPlugin extends JavaPlugin {
 
         config = QuantumHyConfig.load(getDataDirectory());
 
-        getCommandRegistry().registerCommand(new QuantumCommand(config));
+        getCommandRegistry().registerCommand(new QuantumCommand(config, this));
 
         if (!config.enabled) {
             getLogger().atInfo().log("QuantumHy %s disabled via config (enabled=false).",
@@ -73,6 +74,12 @@ public class QuantumHyPlugin extends JavaPlugin {
                 config.pressureGovernorEnabled, config.pressureMsptEnter,
                 config.pressureTrimClientEffects, config.pressureWorldLevers);
         getLogger().atInfo().log("%s", configDump);
+    }
+
+    /** Last adaptive-pass snapshot for /q (no live server re-walk). */
+    public RuntimeSnapshot runtimeSnapshot() {
+        FpsRuntime active = runtime;
+        return active == null ? RuntimeSnapshot.EMPTY : active.snapshot();
     }
 
     @Override

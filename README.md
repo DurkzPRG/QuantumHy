@@ -41,31 +41,88 @@ instead of in one burst that makes the client hitch. That's the `smoothChunkStre
 
 ## Performance
 
-I ran the same kind of scene with the mod off and on (solo, lots of birds and mobs on screen) and
-read the in-game FPS overlay:
+Solo world, same stress route (birds and mobs on screen). Client frametime capture on the **Hytale
+Client** process. Two runs: QuantumHy disabled vs default config enabled. Not a lab benchmark: run
+lengths differ slightly (~205s off, ~233s on).
 
-- Average FPS: about 84 off, about 113 on. Roughly +34%.
-- Median FPS: 74 off, 106 on. Roughly +44%, and the median is closer to how it actually feels.
-- In the heavy moments, with a swarm of entities on screen, off dropped to 50-60 FPS while on held
-  around 90-105. That's about +55% to +75% right where you need it.
+### Test PC
 
-Fair warning: this isn't a lab benchmark. The two runs aren't the exact same path or length, and the
-recordings are at different frame rates, so I leaned on the overlay numbers, not the video files.
-Realistic gain is somewhere around +30% to +45%, with bigger spikes in crowded areas.
+| Component | Spec |
+| --- | --- |
+| CPU | AMD Ryzen 5 3600 |
+| GPU | NVIDIA GeForce GTX 1650 4GB |
+| RAM | 16 GB (2×8 GB) |
 
-Mod on: https://www.youtube.com/watch?v=gjRcmj12A8A
+### At a glance
+
+| Metric | Mod off | Mod on | Change |
+| --- | ---: | ---: | --- |
+| Average FPS | 102 | 146 | **+43%** |
+| P5 | 51.6 | 91.1 | **+76%** |
+| P1 | 36.2 | 64.4 | **+78%** |
+| 1% low average | 14.0 | 19.8 | **+41%** |
+| Time under 60 FPS | 25.3% | 6.9% | **−73%** of that slice |
+
+P95 stayed high on both runs (~277 off, ~271 on). The big win is less time spent under 60 FPS and
+higher floor percentiles when the scene is busy. Massive frametime spikes (500ms–1s+) still show up
+on both runs, so QuantumHy helps sustained crowd load more than it removes one-off hitches.
+
+### Full capture
+
+| Metric | Mod off | Mod on |
+| --- | ---: | ---: |
+| Recording length | ~205 s | ~233 s |
+| Average FPS | 102 | 146.1 |
+| P95 | 276.7 | 271.1 |
+| P5 | 51.6 | 91.1 |
+| P1 | 36.2 | 64.4 |
+| 1% low average | 14.0 | 19.8 |
+| P0.2 | 28.3 | 40.4 |
+| P0.1 | 21.6 | 30.7 |
+| 0.1% low average | 2.4 | 3.0 |
+| Stuttering (time) | 5.3% (10.7 s) | 5.5% (12.8 s) |
+| Smooth | 94.6% | 94.5% |
+| Under 240 FPS | 94.4% | 92.4% |
+| Under 60 FPS | 25.3% | 6.9% |
+| Under 30 FPS | 5.5% | 4.8% |
+| Under 10 FPS | 4.0% | 4.5% |
+| Frametime variance < 2 ms | 70.0% | 86.5% |
+
+### Charts (mod off vs on)
+
+Each capture is the full session: frametime graph on top, plus one analysis panel below.
+
+**Mod off**
+
+![Mod off, stuttering split](docs/benchmark/off-stuttering.png)
+
+![Mod off, frametime variances](docs/benchmark/off-variances.png)
+
+![Mod off, FPS thresholds](docs/benchmark/off-fps-thresholds.png)
+
+**Mod on**
+
+![Mod on, stuttering split](docs/benchmark/on-stuttering.png)
+
+![Mod on, frametime variances](docs/benchmark/on-variances.png)
+
+![Mod on, FPS thresholds](docs/benchmark/on-fps-thresholds.png)
+
+### Video
+
+Mod off: https://www.youtube.com/watch?v=H6Vns8b4hAg
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=gjRcmj12A8A">
-    <img src="https://img.youtube.com/vi/gjRcmj12A8A/maxresdefault.jpg" alt="QuantumHy mod on" width="720">
+  <a href="https://www.youtube.com/watch?v=H6Vns8b4hAg">
+    <img src="https://img.youtube.com/vi/H6Vns8b4hAg/maxresdefault.jpg" alt="QuantumHy mod off" width="720">
   </a>
 </p>
 
-Mod off: https://www.youtube.com/watch?v=I8I05ioJG7g
+Mod on: https://www.youtube.com/watch?v=CKGlXmX1M6k
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=I8I05ioJG7g">
-    <img src="https://img.youtube.com/vi/I8I05ioJG7g/maxresdefault.jpg" alt="QuantumHy mod off" width="720">
+  <a href="https://www.youtube.com/watch?v=CKGlXmX1M6k">
+    <img src="https://img.youtube.com/vi/CKGlXmX1M6k/maxresdefault.jpg" alt="QuantumHy mod on" width="720">
   </a>
 </p>
 
@@ -113,45 +170,42 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `pressureTrimClientEffects` | `true` | Under pressure, trim bloom/sunshaft client effects (restored on release). |
 | `pressureEffectScale` | `0.5` | Multiplier for client effect intensities while trimmed. |
 
-## Running it with LeanCore
+## Running with LeanCore
 
-If you run LeanCore too, each mod owns different levers. QuantumHy never double-writes the same
-field LeanCore is already driving.
+Both mods can run together. Each one owns different levers, so they are not fighting over the
+same `ChunkTracker` or `Player` fields.
 
-| Lever | Default owner (both mods) |
+| Lever | Who drives it (typical setup) |
 | --- | --- |
-| Client view radius | **QuantumHy** (`leanCoreTakeover=true` turns off LeanCore view governance) |
+| Client view radius | **QuantumHy** when `leanCoreTakeover=true` (default). QuantumHy turns off LeanCore view governance on startup. |
 | Entity stream radius | **QuantumHy** |
-| Hot/simulation radius | **LeanCore** (`maxHotLoadedChunksRadius`) |
-| Chunk send rate (`maxChunks/s`, `maxChunks/tick`) | **QuantumHy** if LeanCore `chunkThroughputGovernanceEnabled=false` (LeanCore default). **LeanCore** if that flag is true: QuantumHy auto-yields and stops writing send-rate caps. |
-| MSPT render trim (density, LOD, vertical, effects) | **QuantumHy** (heap/memory tiers stay LeanCore; signals are complementary) |
+| Hot/simulation radius | **LeanCore** |
+| Chunk send rate (`maxChunks/s`, `maxChunks/tick`) | **QuantumHy** when `smoothChunkStreaming=true` (default) |
+| MSPT render trim (density, LOD, vertical, effects) | **QuantumHy** |
 | Spawn stream pause | **QuantumHy** |
-| Zone dormancy / memory unload | **LeanCore** |
+| Zone dormancy / memory | **LeanCore** |
 
-**Recommended combo:** `leanCoreTakeover=true`, LeanCore `chunkThroughputGovernanceEnabled=false`,
-QuantumHy `smoothChunkStreaming=true`. No overlap.
+Defaults on both mods already line up: `leanCoreTakeover=true`, QuantumHy `smoothChunkStreaming=true`,
+LeanCore handling sim/memory. No extra LeanCore config required for a normal install.
 
-**Risky combo:** LeanCore `chunkThroughputGovernanceEnabled=true` **and** QuantumHy trying to set
-chunk rate. QuantumHy detects this and yields chunk send-rate to LeanCore automatically; MSPT
-pressure still trims density, LOD, vertical cull, and client effects.
+**Knobs if you need them**
 
-Do not enable QuantumHy `pressureWorldLevers` alongside LeanCore unless you intend to flip
-world-level spawn/block-tick flags under MSPT (LeanCore does not touch those, but it is extra
-simulation pressure on top of memory governance).
-
-View-radius knobs:
-
-- `leanCoreTakeover` (default `true`): detect LeanCore and take the view radius over. Set false
-  to leave LeanCore alone, but then both may fight over client view radius.
+- `leanCoreTakeover` (default `true`): QuantumHy drives client view radius and disables LeanCore
+  view governance. Set `false` only if you want LeanCore on view radius instead (both mods may
+  conflict).
 - `yieldToLeanCoreViewRadius` (default `false`): QuantumHy stays out of view radius and chunk
-  send-rate entirely; LeanCore keeps both if its throughput governance is on.
+  send-rate entirely. Use this if you deliberately want LeanCore in charge of those levers.
 
-Use `/q status` for live ownership (`chunkRateOwner=`, `LeanCore: view=...`).
+Do not flip on QuantumHy `pressureWorldLevers` alongside LeanCore unless you mean to pause NPC
+spawn and block tick under MSPT. LeanCore does not touch those flags.
+
+`/q status` shows live ownership (`chunkRateOwner=`, `LeanCore: view=...`) and the last adaptive
+pass per player.
 
 ## Commands
 
 - `/q status` (alias `/quantumhy`, `/qhy`): shows what QuantumHy is doing right now, the active
-  levers, and per-player chunk load.
+  levers, per-player chunk load, and the last density/view decision from the adaptive pass.
 - `/q help`: lists the commands.
 
 ## Build

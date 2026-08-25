@@ -50,9 +50,10 @@ public final class LeanCoreBridge {
     }
 
     /**
-     * Whether QuantumHy may write {@code maxChunksPerSecond} / {@code maxChunksPerTick} this pass.
-     * Yields to LeanCore when its throughput governance is on. Writes only when
-     * {@link QuantumHyConfig#smoothChunkStreaming} is enabled (MSPT pressure may still trim caps).
+     * Whether QuantumHy may write {@code ChunkTracker} section send-rate caps this pass
+     * ({@code setMaxSectionsPerSecond} / {@code setMaxSectionsPerTick}). Yields to LeanCore when its
+     * throughput governance is on. Writes only when {@link QuantumHyConfig#smoothChunkStreaming} is
+     * enabled (MSPT pressure may still trim caps).
      */
     public static boolean shouldQuantumHyWriteChunkRate(QuantumHyConfig config) {
         if (config == null || config.yieldToLeanCoreViewRadius || leanCoreOwnsChunkRate()) {

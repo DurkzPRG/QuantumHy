@@ -12,8 +12,8 @@ import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
-import com.hypixel.hytale.server.core.universe.world.chunk.EntityChunk;
 import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
+import com.hypixel.hytale.server.core.universe.world.chunk.section.EntitySection;
 import com.hypixel.hytale.server.core.universe.world.storage.ChunkStore;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
@@ -176,11 +176,11 @@ public final class ClientViewRadiusController {
         if (!LeanCoreBridge.shouldQuantumHyWriteChunkRate(config) || tracker == null) {
             return;
         }
-        if (pass.maxChunksPerSecond() > 0 && tracker.getMaxChunksPerSecond() != pass.maxChunksPerSecond()) {
-            tracker.setMaxChunksPerSecond(pass.maxChunksPerSecond());
+        if (pass.maxChunksPerSecond() > 0 && tracker.getMaxSectionsPerSecond() != pass.maxChunksPerSecond()) {
+            tracker.setMaxSectionsPerSecond(pass.maxChunksPerSecond());
         }
-        if (pass.maxChunksPerTick() > 0 && tracker.getMaxChunksPerTick() != pass.maxChunksPerTick()) {
-            tracker.setMaxChunksPerTick(pass.maxChunksPerTick());
+        if (pass.maxChunksPerTick() > 0 && tracker.getMaxSectionsPerTick() != pass.maxChunksPerTick()) {
+            tracker.setMaxSectionsPerTick(pass.maxChunksPerTick());
         }
     }
 
@@ -214,21 +214,30 @@ public final class ClientViewRadiusController {
                 if (dx * dx + dzSq > radiusSq) {
                     continue;
                 }
-                long index = ChunkUtil.indexChunk(centerX + dx, centerZ + dz);
+                int chunkX = centerX + dx;
+                int chunkZ = centerZ + dz;
+                long index = ChunkUtil.indexChunk(chunkX, chunkZ);
                 WorldChunk worldChunk = chunkStore.getChunkComponent(index, WorldChunk.getComponentType());
                 if (worldChunk == null) {
                     continue;
                 }
                 chunks++;
-                EntityChunk entityChunk = worldChunk.getEntityChunk();
-                if (entityChunk == null) {
+                int count = 0;
+                for (int sectionY = ChunkUtil.MIN_SECTION; sectionY < ChunkUtil.HEIGHT_SECTIONS; sectionY++) {
+                    Ref<ChunkStore> sectionRef = chunkStore.getChunkSectionReference(chunkX, sectionY, chunkZ);
+                    if (sectionRef == null) {
+                        continue;
+                    }
+                    EntitySection section =
+                            sectionRef.getStore().getComponent(sectionRef, EntitySection.getComponentType());
+                    if (section == null) {
+                        continue;
+                    }
+                    count += section.getEntityReferences().size() + section.getEntityHolders().size();
+                }
+                if (count == 0) {
                     continue;
                 }
-                var refs = entityChunk.getEntityReferences();
-                if (refs == null || refs.isEmpty()) {
-                    continue;
-                }
-                int count = refs.size();
                 rawEntities += count;
                 double ringWeight = 1.0D;
                 if (cfg.densityRingWeighting && radius > 0) {
@@ -246,7 +255,7 @@ public final class ClientViewRadiusController {
         if (!cfg.chunkLoadShrinkEnabled || tracker == null) {
             return 0.0D;
         }
-        int signal = tracker.getLoadedChunksCount() + tracker.getLoadingChunksCount();
+        int signal = tracker.getLoadedSectionsCount() + tracker.getLoadingSectionsCount();
         return smoothstepShrink(signal, cfg.chunkLoadLowChunks, cfg.chunkLoadHighChunks);
     }
 
@@ -343,7 +352,7 @@ public final class ClientViewRadiusController {
     private boolean isStreaming(@Nullable ChunkTracker tracker) {
         return config.respectStreamingGrace
                 && tracker != null
-                && tracker.getLoadingChunksCount() >= config.streamingBacklogThreshold;
+                && tracker.getLoadingSectionsCount() >= config.streamingBacklogThreshold;
     }
 
     private static int scale(int base, int min, double frac) {

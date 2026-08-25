@@ -23,7 +23,7 @@ final class SpawnChunkPending {
                 continue;
             }
             ChunkTracker tracker = playerRef.getChunkTracker();
-            if (tracker != null && tracker.getLoadingChunksCount() > 0) {
+            if (tracker != null && tracker.getLoadingSectionsCount() > 0) {
                 return true;
             }
         }

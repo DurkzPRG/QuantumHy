@@ -29,7 +29,7 @@ public class QuantumHyConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /** Bumped when shipped defaults change; older QuantumHy.json files migrate on load. */
-    private static final int CURRENT_CONFIG_VERSION = 2;
+    private static final int CURRENT_CONFIG_VERSION = 3;
 
     private transient File configFile;
 
@@ -91,11 +91,11 @@ public class QuantumHyConfig {
      */
     public boolean chunkLoadShrinkEnabled = true;
 
-    /** Loaded + loading chunk count at or below this adds no chunk-load shrink. */
-    public int chunkLoadLowChunks = 48;
+    /** Loaded + loading section count at or below this adds no chunk-load shrink (0.6+ sections). */
+    public int chunkLoadLowChunks = 480;
 
-    /** At or above this loaded + loading count, chunk-load shrink hits full strength. */
-    public int chunkLoadHighChunks = 112;
+    /** At or above this loaded + loading section count, chunk-load shrink hits full strength. */
+    public int chunkLoadHighChunks = 1120;
 
     /**
      * Smoothing for the density signal: weight of the newest sample in an exponential moving average,
@@ -139,8 +139,8 @@ public class QuantumHyConfig {
     public int maxVisibleEntitiesPerPlayer = 80;
 
     /**
-     * Pause environmental spawning while any player has chunks streaming to the client
-     * ({@code ChunkTracker.getLoadingChunksCount() > 0}). Uses the engine spawn pool cooldown.
+     * Pause environmental spawning while any player has sections streaming to the client
+     * ({@code ChunkTracker.getLoadingSectionsCount() > 0}). Uses the engine spawn pool cooldown.
      */
     public boolean holdSpawnOnLoadingChunks = true;
 
@@ -149,7 +149,7 @@ public class QuantumHyConfig {
 
     /** Hold radius cuts while a player is actively streaming at least this many chunks. */
     public boolean respectStreamingGrace = true;
-    public int streamingBacklogThreshold = 8;
+    public int streamingBacklogThreshold = 80;
 
     /**
      * Smooth how fast chunks stream to each managed client. The hitching you feel moving into fresh
@@ -322,6 +322,13 @@ public class QuantumHyConfig {
                 v -> pressureSustainSeconds = v);
         changed |= remapDouble(notes, "pressureDensityMultiplier", pressureDensityMultiplier, 1.35D, 1.45D,
                 v -> pressureDensityMultiplier = v);
+        // 0.6 reports sections (~10× columns); scale old column-era defaults.
+        changed |= remapInt(notes, "chunkLoadLowChunks", chunkLoadLowChunks, 48, 480,
+                v -> chunkLoadLowChunks = v);
+        changed |= remapInt(notes, "chunkLoadHighChunks", chunkLoadHighChunks, 112, 1120,
+                v -> chunkLoadHighChunks = v);
+        changed |= remapInt(notes, "streamingBacklogThreshold", streamingBacklogThreshold, 8, 80,
+                v -> streamingBacklogThreshold = v);
 
         if (!json.has("densityRingWeighting")) {
             densityRingWeighting = true;
@@ -344,14 +351,14 @@ public class QuantumHyConfig {
             notes.add("chunkLoadShrinkEnabled=true");
         }
         if (!json.has("chunkLoadLowChunks") || chunkLoadLowChunks <= 0) {
-            chunkLoadLowChunks = 48;
+            chunkLoadLowChunks = 480;
             changed = true;
-            notes.add("chunkLoadLowChunks=48");
+            notes.add("chunkLoadLowChunks=480");
         }
         if (!json.has("chunkLoadHighChunks") || chunkLoadHighChunks <= 0) {
-            chunkLoadHighChunks = 112;
+            chunkLoadHighChunks = 1120;
             changed = true;
-            notes.add("chunkLoadHighChunks=112");
+            notes.add("chunkLoadHighChunks=1120");
         }
 
         if (configVersion != CURRENT_CONFIG_VERSION) {
@@ -419,10 +426,10 @@ public class QuantumHyConfig {
             baselineShrinkFraction = 0.10D;
         }
         if (chunkLoadHighChunks <= 0) {
-            chunkLoadHighChunks = 112;
+            chunkLoadHighChunks = 1120;
         }
         if (chunkLoadLowChunks < 0) {
-            chunkLoadLowChunks = 48;
+            chunkLoadLowChunks = 480;
         }
         if (chunkLoadLowChunks >= chunkLoadHighChunks) {
             chunkLoadLowChunks = Math.max(0, chunkLoadHighChunks / 2);

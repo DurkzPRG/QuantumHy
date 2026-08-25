@@ -211,8 +211,8 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `densityRingEdgeWeight` | `0.55` | Ring weight at the scan edge when ring weighting is on (`1.0` = flat count). |
 | `baselineShrinkFraction` | `0.10` | Minimum shrink even in "open" density (`0` = off). |
 | `chunkLoadShrinkEnabled` | `true` | Extra shrink from loaded + streaming chunk count (render backlog). |
-| `chunkLoadLowChunks` | `48` | Loaded + loading chunks at or below this: no chunk-load shrink. |
-| `chunkLoadHighChunks` | `112` | At or above this: chunk-load shrink hits full strength. |
+| `chunkLoadLowChunks` | `480` | Loaded + loading **sections** (0.6+) at or below this: no chunk-load shrink. |
+| `chunkLoadHighChunks` | `1120` | At or above this section count: chunk-load shrink hits full strength. |
 | `densitySmoothing` | `0.4` | Smooths the density signal so a moving player's view doesn't flip-flop. Lower is smoother; `1.0` is off. |
 | `adaptEntityRadius` | `true` | Also shrink how far entities are streamed (not just chunks). The big win in mob-heavy spots. |
 | `minEntityViewBlocks` | `48` | Never stream entities closer than this, in blocks (16 blocks = 1 chunk). |
@@ -222,7 +222,7 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `holdSpawnOnLoadingChunks` | `true` | Pause environmental spawning while any player has chunks streaming to the client. |
 | `minViewRadiusDelta` | `2` | Don't bother changing the view for tiny differences. |
 | `respectStreamingGrace` | `true` | Don't shrink while you're still loading chunks. |
-| `streamingBacklogThreshold` | `8` | How many loading chunks counts as "still streaming". |
+| `streamingBacklogThreshold` | `80` | How many loading **sections** (0.6+) counts as "still streaming". |
 | `smoothChunkStreaming` | `true` | Spread chunk streaming out so moving into new terrain doesn't hitch. |
 | `maxChunksPerSecond` | `128` | Cap on chunks streamed per second to a managed client. `0` keeps the engine default. |
 | `maxChunksPerTick` | `2` | Cap on chunks streamed per tick. This is the real anti-hitch lever (engine default is 4). `0` keeps the default. |

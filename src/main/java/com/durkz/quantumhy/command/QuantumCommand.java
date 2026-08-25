@@ -29,15 +29,11 @@ public class QuantumCommand extends AbstractCommandCollection {
 
     public QuantumCommand(QuantumHyConfig config, QuantumHyPlugin plugin) {
         super("quantumhy", "QuantumHy status and diagnostics");
+        requireNoPermission();
         addAliases("q", "qhy");
         addSubCommand(new StatusSubCommand(config, plugin));
         addSubCommand(new HelpSubCommand());
         addSubCommand(new PerfSubCommand());
-    }
-
-    @Override
-    protected boolean canGeneratePermission() {
-        return false;
     }
 
     private static final class StatusSubCommand extends CommandBase {
@@ -47,13 +43,9 @@ public class QuantumCommand extends AbstractCommandCollection {
 
         StatusSubCommand(QuantumHyConfig config, QuantumHyPlugin plugin) {
             super("status", "Show QuantumHy status");
+            requireNoPermission();
             this.config = config;
             this.plugin = plugin;
-        }
-
-        @Override
-        protected boolean canGeneratePermission() {
-            return false;
         }
 
         @Override
@@ -66,11 +58,7 @@ public class QuantumCommand extends AbstractCommandCollection {
 
         HelpSubCommand() {
             super("help", "List QuantumHy commands");
-        }
-
-        @Override
-        protected boolean canGeneratePermission() {
-            return false;
+            requireNoPermission();
         }
 
         @Override
@@ -85,12 +73,8 @@ public class QuantumCommand extends AbstractCommandCollection {
 
         PerfSubCommand() {
             super("perf", "Toggle local dev performance meter");
+            requireNoPermission();
             this.actionArg = withRequiredArg("action", "on | off", ArgTypes.STRING);
-        }
-
-        @Override
-        protected boolean canGeneratePermission() {
-            return false;
         }
 
         @Override
@@ -197,8 +181,8 @@ public class QuantumCommand extends AbstractCommandCollection {
             String line = "- " + nameOf(ref);
             if (tracker != null) {
                 line += String.format(Locale.ROOT, " chunks loaded=%d loading=%d rate=%d/s",
-                        tracker.getLoadedChunksCount(), tracker.getLoadingChunksCount(),
-                        tracker.getMaxChunksPerSecond());
+                        tracker.getLoadedSectionsCount(), tracker.getLoadingSectionsCount(),
+                        tracker.getMaxSectionsPerSecond());
             }
             send(ctx, line + " (awaiting first pass)", "#CCCCCC");
         }

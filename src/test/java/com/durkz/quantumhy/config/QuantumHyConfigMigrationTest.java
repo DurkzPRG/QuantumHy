@@ -56,8 +56,11 @@ class QuantumHyConfigMigrationTest {
         assertEquals(48.0D, config.pressureMsptEnter, 1e-9);
         assertTrue(config.densityRingWeighting);
         assertEquals(0.10D, config.baselineShrinkFraction, 1e-9);
-        assertEquals(2, config.configVersion);
-        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 2"));
+        assertEquals(480, config.chunkLoadLowChunks);
+        assertEquals(1120, config.chunkLoadHighChunks);
+        assertEquals(80, config.streamingBacklogThreshold);
+        assertEquals(3, config.configVersion);
+        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 3"));
     }
 
     @Test
@@ -68,6 +71,9 @@ class QuantumHyConfigMigrationTest {
 
         assertEquals(1.0D, config.densityLowPerChunk, 1e-9);
         assertEquals(4.0D, config.densityHighPerChunk, 1e-9);
-        assertEquals(2, config.configVersion);
+        assertEquals(480, config.chunkLoadLowChunks);
+        assertEquals(1120, config.chunkLoadHighChunks);
+        assertEquals(80, config.streamingBacklogThreshold);
+        assertEquals(3, config.configVersion);
     }
 }

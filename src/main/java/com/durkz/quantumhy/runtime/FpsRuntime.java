@@ -282,9 +282,9 @@ public final class FpsRuntime {
             return;
         }
         ChunkTracker tracker = ref.getChunkTracker();
-        int loaded = tracker == null ? 0 : tracker.getLoadedChunksCount();
-        int loading = tracker == null ? 0 : tracker.getLoadingChunksCount();
-        int rate = tracker == null ? 0 : tracker.getMaxChunksPerSecond();
+        int loaded = tracker == null ? 0 : tracker.getLoadedSectionsCount();
+        int loading = tracker == null ? 0 : tracker.getLoadingSectionsCount();
+        int rate = tracker == null ? 0 : tracker.getMaxSectionsPerSecond();
         playerSnapshotScratch.put(playerId, new RuntimeSnapshot.PlayerRow(
                 decision.name(), worldName, loaded, loading, rate, decision.line()));
     }

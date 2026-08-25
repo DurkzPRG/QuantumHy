@@ -332,7 +332,7 @@ public class QuantumHyConfig {
     }
 
     /**
-     * Rewrites 0.2.0-era defaults and fills keys added through 0.2.2. Compares loaded field values
+     * Rewrites 0.2.0-era defaults and fills keys added through 0.2.3. Compares loaded field values
      * (not raw JSON gates) so a partial v1 migration can be repaired on v2.
      */
     private boolean migrateIfNeeded(@Nullable JsonObject root) {

@@ -49,7 +49,63 @@ public final class ViewAdaptPolicy {
     }
 
     public static boolean canExpand(int calmPasses, int hysteresisPasses) {
+        return canExpand(calmPasses, hysteresisPasses, false, false, true, false);
+    }
+
+    /**
+     * Expand is opt-in and conservative: never while MSPT-pressured, streaming, flying, or when
+     * the density disk is only half-loaded (looks like open sky because chunks are not there yet).
+     */
+    public static boolean canExpand(int calmPasses, int hysteresisPasses, boolean pressured,
+            boolean streaming, boolean sampleCovered, boolean movingFast) {
+        if (pressured || streaming || movingFast || !sampleCovered) {
+            return false;
+        }
         return calmPasses >= Math.max(1, hysteresisPasses);
+    }
+
+    /**
+     * Skip the 49-column density walk when it cannot change the expand decision (join, flight,
+     * streaming, cached same chunk, or already at min with expand frozen).
+     */
+    public static boolean shouldSkipDensityScan(boolean firstPass, boolean movingFast, boolean streaming,
+            boolean cacheHit, boolean atMin, boolean expandGatesExceptCoverage) {
+        return firstPass || movingFast || streaming || cacheHit || (atMin && !expandGatesExceptCoverage);
+    }
+
+    /** Chebyshev chunk move of 2+ in one pass is travel/flight, not standing around. */
+    public static boolean movingFast(boolean hasLastChunk, int lastX, int lastZ, int chunkX, int chunkZ) {
+        if (!hasLastChunk) {
+            return false;
+        }
+        int dx = Math.abs(chunkX - lastX);
+        int dz = Math.abs(chunkZ - lastZ);
+        return Math.max(dx, dz) > 1;
+    }
+
+    /** Bloom/sunshaft packets during a hitch make the hitch worse; wait for a healthy last tick. */
+    public static boolean canTrimClientEffects(double msptLast, double maxLastTickMs) {
+        return msptLast <= maxLastTickMs;
+    }
+
+    /** Columns in the density disk of {@code radius} (dx²+dz² ≤ r²). */
+    public static int expectedScanChunks(int radius) {
+        int r = Math.max(0, radius);
+        int r2 = r * r;
+        int n = 0;
+        for (int dz = -r; dz <= r; dz++) {
+            for (int dx = -r; dx <= r; dx++) {
+                if (dx * dx + dz * dz <= r2) {
+                    n++;
+                }
+            }
+        }
+        return Math.max(1, n);
+    }
+
+    /** At least half the scan disk must be loaded, or "open sky" is just missing terrain. */
+    public static boolean densityCovered(int chunks, int radius) {
+        return chunks * 2 >= expectedScanChunks(radius);
     }
 
     /**

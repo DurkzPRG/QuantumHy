@@ -73,4 +73,47 @@ class ViewAdaptPolicyTest {
         assertEquals(0.0D, ViewAdaptPolicy.fracFromRadius(14, 6, 14), 1e-9);
         assertEquals(0.125D, ViewAdaptPolicy.fracFromRadius(14, 6, 13), 1e-9);
     }
+
+    @Test
+    void expandFrozenWhilePressuredStreamingOrFlying() {
+        assertFalse(ViewAdaptPolicy.canExpand(8, 2, true, false, true, false));
+        assertFalse(ViewAdaptPolicy.canExpand(8, 2, false, true, true, false));
+        assertFalse(ViewAdaptPolicy.canExpand(8, 2, false, false, true, true));
+        assertTrue(ViewAdaptPolicy.canExpand(8, 2, false, false, true, false));
+    }
+
+    @Test
+    void expandFrozenOnPartialDensityDisk() {
+        assertEquals(49, ViewAdaptPolicy.expectedScanChunks(4));
+        assertFalse(ViewAdaptPolicy.densityCovered(20, 4));
+        assertFalse(ViewAdaptPolicy.densityCovered(12, 4));
+        assertTrue(ViewAdaptPolicy.densityCovered(25, 4));
+        assertFalse(ViewAdaptPolicy.canExpand(8, 2, false, false, false, false));
+    }
+
+    @Test
+    void movingFastIsChebyshevTwoChunks() {
+        assertFalse(ViewAdaptPolicy.movingFast(false, 0, 0, 10, 10));
+        assertFalse(ViewAdaptPolicy.movingFast(true, 0, 0, 1, 1));
+        assertTrue(ViewAdaptPolicy.movingFast(true, 0, 0, 2, 0));
+        assertTrue(ViewAdaptPolicy.movingFast(true, 5, 5, 5, 8));
+    }
+
+    @Test
+    void skipScanOnJoinFlightStreamingAndMinHold() {
+        assertTrue(ViewAdaptPolicy.shouldSkipDensityScan(true, false, false, false, false, true));
+        assertTrue(ViewAdaptPolicy.shouldSkipDensityScan(false, true, false, false, false, true));
+        assertTrue(ViewAdaptPolicy.shouldSkipDensityScan(false, false, true, false, false, true));
+        assertTrue(ViewAdaptPolicy.shouldSkipDensityScan(false, false, false, true, false, true));
+        assertTrue(ViewAdaptPolicy.shouldSkipDensityScan(false, false, false, false, true, false));
+        assertFalse(ViewAdaptPolicy.shouldSkipDensityScan(false, false, false, false, true, true));
+        assertFalse(ViewAdaptPolicy.shouldSkipDensityScan(false, false, false, false, false, true));
+    }
+
+    @Test
+    void effectTrimWaitsForHealthyLastTick() {
+        assertFalse(ViewAdaptPolicy.canTrimClientEffects(2972.0D, 50.0D));
+        assertFalse(ViewAdaptPolicy.canTrimClientEffects(302.0D, 50.0D));
+        assertTrue(ViewAdaptPolicy.canTrimClientEffects(5.3D, 50.0D));
+    }
 }

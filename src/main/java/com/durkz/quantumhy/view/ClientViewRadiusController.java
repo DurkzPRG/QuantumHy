@@ -117,14 +117,61 @@ public final class ClientViewRadiusController {
         }
 
         PlayerState state = stateFor(playerRef.getUuid());
-        Density density = sampleDensity(playerRef, world, config, state);
         ChunkTracker tracker = playerRef.getChunkTracker();
-        boolean allowWrites = System.nanoTime() < writeDeadlineNanos;
+        int chunkCurrent = player.getClientViewRadius();
 
-        if (!density.valid()) {
+        int centerX = 0;
+        int centerZ = 0;
+        boolean haveChunkPos = false;
+        Transform transform = playerRef.getTransform();
+        if (transform != null && transform.getPosition() != null) {
+            centerX = ChunkUtil.chunkCoordinate(transform.getPosition().x);
+            centerZ = ChunkUtil.chunkCoordinate(transform.getPosition().z);
+            haveChunkPos = true;
+        }
+        boolean movingFast = haveChunkPos && state != null
+                && ViewAdaptPolicy.movingFast(state.hasChunkPos, state.lastChunkX, state.lastChunkZ, centerX, centerZ);
+
+        int loadSignal = tracker == null
+                ? 0
+                : tracker.getLoadedSectionsCount() + tracker.getLoadingSectionsCount();
+        boolean calm = !movingFast && ViewAdaptPolicy.loadIsCalm(
+                loadSignal, config.chunkLoadLowChunks, config.chunkLoadShrinkEnabled);
+        if (state != null) {
+            state.calmPasses = ViewAdaptPolicy.nextCalmPasses(state.calmPasses, calm);
+        }
+        boolean streaming = isStreaming(tracker);
+        boolean cacheHit = state != null && state.hasDensityCache && haveChunkPos
+                && state.cacheChunkX == centerX && state.cacheChunkZ == centerZ;
+        boolean firstPass = state != null && !state.hasAppliedFrac;
+        boolean atMin = chunkCurrent <= config.minClientViewRadius;
+        boolean trackerExpandOk = state != null
+                && ViewAdaptPolicy.canExpand(state.calmPasses, config.expandHysteresisPasses,
+                pass.pressured(), streaming, true, movingFast);
+        boolean skipScan = ViewAdaptPolicy.shouldSkipDensityScan(
+                firstPass, movingFast, streaming, cacheHit, atMin, trackerExpandOk);
+
+        Density density;
+        if (skipScan && state != null && state.hasDensityCache) {
+            density = state.cachedDensity;
+        } else if (skipScan) {
+            density = Density.DEFERRED;
+        } else {
+            density = sampleDensity(playerRef, world, config, state);
+        }
+        boolean allowWrites = System.nanoTime() < writeDeadlineNanos;
+        boolean sampleCovered = density.valid()
+                && ViewAdaptPolicy.densityCovered(density.chunks(), config.densityScanChunkRadius);
+
+        if (!density.valid() && density != Density.DEFERRED) {
+            if (haveChunkPos && state != null) {
+                state.hasChunkPos = true;
+                state.lastChunkX = centerX;
+                state.lastChunkZ = centerZ;
+            }
             applyChunkStreamingSmoothing(tracker, pass);
             Decision skipped = new Decision(name, density.entities(), density.chunks(), -1,
-                    player.getClientViewRadius(), player.getClientViewRadius(), false, false,
+                    chunkCurrent, chunkCurrent, false, false,
                     -1, -1, false, 0, "no-sample");
             UUID playerId = playerRef.getUuid();
             if (playerId != null) {
@@ -133,22 +180,22 @@ public final class ClientViewRadiusController {
             return skipped;
         }
 
-        double smoothed = smooth(state, density.perChunk());
-        double densityFrac = pass.shrinkFraction(smoothed);
+        double smoothed;
+        if (density.valid() && density != Density.DEFERRED) {
+            smoothed = smooth(state, density.perChunk());
+        } else if (state != null && state.hasSmoothed) {
+            smoothed = state.smoothed;
+        } else {
+            smoothed = 0.0D;
+        }
+        double densityFrac = sampleCovered ? pass.shrinkFraction(smoothed) : 0.0D;
         double chunkLoadFrac = chunkLoadShrinkFraction(tracker, config);
         double rawFrac = ViewAdaptPolicy.combinedShrinkFraction(
                 densityFrac, chunkLoadFrac, config.baselineShrinkFraction);
 
-        int loadSignal = tracker == null
-                ? 0
-                : tracker.getLoadedSectionsCount() + tracker.getLoadingSectionsCount();
-        boolean calm = ViewAdaptPolicy.loadIsCalm(
-                loadSignal, config.chunkLoadLowChunks, config.chunkLoadShrinkEnabled);
-        if (state != null) {
-            state.calmPasses = ViewAdaptPolicy.nextCalmPasses(state.calmPasses, calm);
-        }
         boolean canExpand = state != null
-                && ViewAdaptPolicy.canExpand(state.calmPasses, config.expandHysteresisPasses);
+                && ViewAdaptPolicy.canExpand(state.calmPasses, config.expandHysteresisPasses,
+                pass.pressured(), streaming, sampleCovered, movingFast);
         double frac = ViewAdaptPolicy.ratchetFrac(
                 rawFrac,
                 state == null ? 0.0D : state.lastAppliedFrac,
@@ -158,16 +205,17 @@ public final class ClientViewRadiusController {
         if (state != null && state.hasAppliedFrac && frac > rawFrac + 1e-6 && !canExpand) {
             reason = "hold";
         }
+        int radiusCeiling = chunkBase(ceiling(state, State.CHUNK, Math.max(1, player.getViewRadius())));
+        if (pass.pressured() && chunkCurrent < radiusCeiling && !canExpand) {
+            reason = "pressure";
+        }
 
-        int chunkCurrent = player.getClientViewRadius();
-        int chunkBase = chunkBase(ceiling(state, State.CHUNK, Math.max(1, player.getViewRadius())));
-        int chunkIdeal = scale(chunkBase, config.minClientViewRadius, frac);
+        int chunkIdeal = scale(radiusCeiling, config.minClientViewRadius, frac);
         int shrinkCap = ViewAdaptPolicy.chunkShrinkCap(config.maxShrinkChunksPerPass, pass.pressured());
         int chunkTarget = ViewAdaptPolicy.rampToward(
                 chunkCurrent, chunkIdeal, config.maxExpandChunksPerPass, shrinkCap);
         boolean chunkApplied = false;
         boolean chunkHeld = false;
-        boolean streaming = isStreaming(tracker);
         boolean chunkWantsWrite = chunkTarget != chunkCurrent;
         if (chunkWantsWrite && (streaming || !allowWrites)) {
             chunkHeld = true;
@@ -187,14 +235,20 @@ public final class ClientViewRadiusController {
             entCurrent = viewer.viewRadiusBlocks;
             lodExcluded = viewer.lodExcludedCount;
             int entBase = ceiling(state, State.ENTITY, entCurrent);
-            int entIdeal = scale(entBase, Math.min(config.minEntityViewBlocks, entBase), frac);
-            int entShrink = ViewAdaptPolicy.entityShrinkCap(
+            int entMin = Math.min(config.minEntityViewBlocks, entBase);
+            int entIdeal = frac >= 1.0D ? entMin : scale(entBase, entMin, frac);
+            int entShrink = frac >= 1.0D
+                    ? Math.max(entCurrent - entMin, 1)
+                    : ViewAdaptPolicy.entityShrinkCap(
                     config.maxExpandEntityBlocksPerPass,
                     config.maxExpandChunksPerPass,
                     config.maxShrinkChunksPerPass,
                     pass.pressured());
             entTarget = ViewAdaptPolicy.rampToward(
                     entCurrent, entIdeal, config.maxExpandEntityBlocksPerPass, entShrink);
+            if (entTarget > entCurrent && !canExpand) {
+                entTarget = entCurrent;
+            }
             if (Math.abs(entTarget - entCurrent) >= ENTITY_BLOCKS_APPLY_STEP) {
                 if (allowWrites && !streaming) {
                     viewer.viewRadiusBlocks = entTarget;
@@ -208,8 +262,13 @@ public final class ClientViewRadiusController {
         if (state != null) {
             int liveRadius = chunkApplied ? chunkTarget : chunkCurrent;
             state.lastAppliedFrac = ViewAdaptPolicy.fracFromRadius(
-                    chunkBase, config.minClientViewRadius, liveRadius);
+                    radiusCeiling, config.minClientViewRadius, liveRadius);
             state.hasAppliedFrac = true;
+            if (haveChunkPos) {
+                state.hasChunkPos = true;
+                state.lastChunkX = centerX;
+                state.lastChunkZ = centerZ;
+            }
         }
 
         applyChunkStreamingSmoothing(tracker, pass);
@@ -473,11 +532,16 @@ public final class ClientViewRadiusController {
         boolean hasDensityCache;
         int cacheChunkX;
         int cacheChunkZ;
+        boolean hasChunkPos;
+        int lastChunkX;
+        int lastChunkZ;
         Density cachedDensity = Density.NONE;
     }
 
     private record Density(int rawEntities, double weightedEntities, int chunks) {
         static final Density NONE = new Density(-1, 0, 0);
+        /** Scan skipped this pass; not a real empty disk. */
+        static final Density DEFERRED = new Density(0, 0, 0);
 
         boolean valid() {
             return ViewAdaptPolicy.densityValid(rawEntities, chunks);

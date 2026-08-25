@@ -159,6 +159,10 @@ public final class PressureGovernor {
             state.belowExitPasses = 0;
         }
 
+        if (state.tier == Tier.PRESSURED) {
+            maybeTrimClientEffects(world, config, state);
+        }
+
         Snapshot snap = new Snapshot(state.tier, msptAvg, msptLast,
                 state.worldLeversApplied, state.effectsTrimmed);
         state.lastSnapshot = snap;
@@ -287,9 +291,7 @@ public final class PressureGovernor {
             state.worldLeversApplied = true;
         }
 
-        if (config.pressureTrimClientEffects && !state.effectsTrimmed) {
-            trimClientEffects(world, config, state);
-        }
+        maybeTrimClientEffects(world, config, state);
 
         if (config.verboseLog) {
             logger.atInfo().log("pressure [world=%s] enter mspt=%.1f avg10s=%.1f worldLevers=%s effects=%s",
@@ -331,6 +333,19 @@ public final class PressureGovernor {
             logger.atInfo().log("pressure [world=%s] release (%s) mspt=%.1f avg10s=%.1f",
                     world.getName(), reason, state.msptLast, state.msptAvg10s);
         }
+    }
+
+    private static final double EFFECT_TRIM_MAX_MSPT = 50.0D;
+
+    private void maybeTrimClientEffects(@Nonnull World world, @Nonnull QuantumHyConfig config,
+            @Nonnull WorldState state) {
+        if (!config.pressureTrimClientEffects || state.effectsTrimmed) {
+            return;
+        }
+        if (!ViewAdaptPolicy.canTrimClientEffects(state.msptLast, EFFECT_TRIM_MAX_MSPT)) {
+            return;
+        }
+        trimClientEffects(world, config, state);
     }
 
     private void trimClientEffects(@Nonnull World world, @Nonnull QuantumHyConfig config, @Nonnull WorldState state) {

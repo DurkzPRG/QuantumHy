@@ -207,11 +207,16 @@ public final class FpsRuntime {
         pressure.applyEntityLod(config, pressureSnap);
         PressureGovernor.ViewPassContext pass = pressure.viewContext(config, pressureSnap);
 
+        long startNs = System.nanoTime();
+        long deadlineNs = config.worldPassBudgetMs <= 0
+                ? Long.MAX_VALUE
+                : startNs + (long) config.worldPassBudgetMs * 1_000_000L;
+
         int changed = 0;
         StringBuilder details = config.verboseLog ? new StringBuilder() : null;
         for (PlayerRef ref : batch) {
             try {
-                ClientViewRadiusController.Decision decision = controller.applyOne(ref, world, pass);
+                ClientViewRadiusController.Decision decision = controller.applyOne(ref, world, pass, deadlineNs);
                 if (decision == null) {
                     continue;
                 }

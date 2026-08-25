@@ -59,7 +59,8 @@ public class QuantumHyPlugin extends JavaPlugin {
                         + "chunkLoadShrink=%s smoothing=%.2f adaptEntity=%s "
                         + "minEntityBlocks=%d entityLod=%.2fx vCull=%s entityCap=%s spawnHold=%s minDelta=%d streamGrace=%s "
                         + "backlog>=%d smoothStreaming=%s maxChunks/s=%d maxChunks/tick=%d leanCoreTakeover=%s yield=%s "
-                        + "pressureGov=%s msptEnter=%.0f effects=%s worldLevers=%s",
+                        + "pressureGov=%s msptEnter=%.0f exitLast=%s effects=%s worldLevers=%s "
+                        + "expand=%d shrink=%d entExpand=%d hyst=%d budget=%dms",
                 getManifest().getVersion(), config.verboseLog, config.tickIntervalSeconds,
                 config.initialDelaySeconds, config.targetClientViewRadius, config.minClientViewRadius,
                 config.maxClientViewRadius, config.densityScanChunkRadius, config.densityLowPerChunk,
@@ -78,7 +79,11 @@ public class QuantumHyPlugin extends JavaPlugin {
                 config.maxChunksPerSecond, config.maxChunksPerTick, config.leanCoreTakeover,
                 config.yieldToLeanCoreViewRadius,
                 config.pressureGovernorEnabled, config.pressureMsptEnter,
-                config.pressureTrimClientEffects, config.pressureWorldLevers);
+                config.pressureExitRequiresLastTick,
+                config.pressureTrimClientEffects, config.pressureWorldLevers,
+                config.maxExpandChunksPerPass, config.maxShrinkChunksPerPass,
+                config.maxExpandEntityBlocksPerPass, config.expandHysteresisPasses,
+                config.worldPassBudgetMs);
         getLogger().atInfo().log("%s", configDump);
     }
 

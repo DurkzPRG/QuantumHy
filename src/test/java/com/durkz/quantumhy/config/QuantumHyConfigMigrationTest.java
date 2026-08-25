@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class QuantumHyConfigMigrationTest {
@@ -70,8 +71,14 @@ class QuantumHyConfigMigrationTest {
         assertEquals(1550, config.chunkLoadHighChunks);
         assertEquals(80, config.streamingBacklogThreshold);
         assertEquals(8, config.maxChunksPerTick);
-        assertEquals(4, config.configVersion);
-        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 4"));
+        assertEquals(1, config.maxExpandChunksPerPass);
+        assertEquals(2, config.maxShrinkChunksPerPass);
+        assertEquals(16, config.maxExpandEntityBlocksPerPass);
+        assertEquals(2, config.expandHysteresisPasses);
+        assertEquals(8, config.worldPassBudgetMs);
+        assertTrue(config.pressureExitRequiresLastTick);
+        assertEquals(5, config.configVersion);
+        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 5"));
     }
 
     @Test
@@ -86,7 +93,7 @@ class QuantumHyConfigMigrationTest {
         assertEquals(1550, config.chunkLoadHighChunks);
         assertEquals(80, config.streamingBacklogThreshold);
         assertEquals(8, config.maxChunksPerTick);
-        assertEquals(4, config.configVersion);
+        assertEquals(5, config.configVersion);
     }
 
     @Test
@@ -98,6 +105,35 @@ class QuantumHyConfigMigrationTest {
         assertEquals(700, config.chunkLoadLowChunks);
         assertEquals(1550, config.chunkLoadHighChunks);
         assertEquals(8, config.maxChunksPerTick);
-        assertEquals(4, config.configVersion);
+        assertEquals(5, config.configVersion);
+    }
+
+    @Test
+    void v4FileKeepsVerboseLogAndGainsV5Keys(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("QuantumHy.json"), """
+                {
+                  "verboseLog": true,
+                  "baselineShrinkFraction": 0.10,
+                  "configVersion": 4
+                }
+                """, StandardCharsets.UTF_8);
+
+        QuantumHyConfig config = QuantumHyConfig.load(dir);
+
+        assertTrue(config.verboseLog);
+        assertEquals(0.10D, config.baselineShrinkFraction, 1e-9);
+        assertEquals(1, config.maxExpandChunksPerPass);
+        assertEquals(2, config.expandHysteresisPasses);
+        assertTrue(config.pressureExitRequiresLastTick);
+        assertEquals(5, config.configVersion);
+    }
+
+    @Test
+    void newInstallDefaultsVerboseLogOff(@TempDir Path dir) {
+        QuantumHyConfig config = QuantumHyConfig.load(dir);
+
+        assertFalse(config.verboseLog);
+        assertEquals(5, config.configVersion);
+        assertEquals(8, config.worldPassBudgetMs);
     }
 }

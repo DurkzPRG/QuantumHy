@@ -29,7 +29,7 @@ public class QuantumHyConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /** Bumped when shipped defaults change; older QuantumHy.json files migrate on load. */
-    private static final int CURRENT_CONFIG_VERSION = 4;
+    private static final int CURRENT_CONFIG_VERSION = 5;
 
     private transient File configFile;
 
@@ -37,7 +37,7 @@ public class QuantumHyConfig {
     public boolean enabled = true;
 
     /** Detailed server log: one line per world per pass with each player's density and view decision. */
-    public boolean verboseLog = true;
+    public boolean verboseLog = false;
 
     /** Seconds between adaptive passes. */
     public int tickIntervalSeconds = 5;
@@ -146,8 +146,36 @@ public class QuantumHyConfig {
      */
     public boolean holdSpawnOnLoadingChunks = true;
 
-    /** Minimum change (chunks) before an update is sent, to avoid churn. */
+    /** Minimum change (chunks) before an update is sent, to avoid churn. Ramped +1 expands still apply. */
     public int minViewRadiusDelta = 2;
+
+    /** Max chunks the client view radius may increase in one adaptive pass. */
+    public int maxExpandChunksPerPass = 1;
+
+    /** Max chunks the client view radius may decrease in one adaptive pass (doubled under MSPT pressure). */
+    public int maxShrinkChunksPerPass = 2;
+
+    /** Max entity-stream blocks the radius may increase in one adaptive pass. */
+    public int maxExpandEntityBlocksPerPass = 16;
+
+    /**
+     * Consecutive calm passes (loaded+loading at or below {@link #chunkLoadLowChunks}) required
+     * before an expand is allowed. Stops chunk-load shrink from immediately reopening the radius.
+     */
+    public int expandHysteresisPasses = 2;
+
+    /**
+     * Wall-clock budget for radius writes on the world thread, in milliseconds. After this, the
+     * pass still samples and logs but does not call {@code setClientViewRadius}. {@code 0} disables
+     * the cap.
+     */
+    public int worldPassBudgetMs = 8;
+
+    /**
+     * When true, pressure mode only exits if both the 10s MSPT average <em>and</em> the last tick
+     * are at or below {@link #pressureMsptExit}. Prevents release in the middle of a hitch.
+     */
+    public boolean pressureExitRequiresLastTick = true;
 
     /** Hold radius cuts while a player is actively streaming at least this many sections. */
     public boolean respectStreamingGrace = true;
@@ -304,7 +332,7 @@ public class QuantumHyConfig {
     }
 
     /**
-     * Rewrites 0.2.0-era defaults and fills keys added in 0.2.1. Compares loaded field values
+     * Rewrites 0.2.0-era defaults and fills keys added through 0.2.2. Compares loaded field values
      * (not raw JSON gates) so a partial v1 migration can be repaired on v2.
      */
     private boolean migrateIfNeeded(@Nullable JsonObject root) {
@@ -378,6 +406,37 @@ public class QuantumHyConfig {
             chunkLoadHighChunks = 1550;
             changed = true;
             notes.add("chunkLoadHighChunks=1550");
+        }
+
+        if (!json.has("maxExpandChunksPerPass") || maxExpandChunksPerPass < 1) {
+            maxExpandChunksPerPass = 1;
+            changed = true;
+            notes.add("maxExpandChunksPerPass=1");
+        }
+        if (!json.has("maxShrinkChunksPerPass") || maxShrinkChunksPerPass < 1) {
+            maxShrinkChunksPerPass = 2;
+            changed = true;
+            notes.add("maxShrinkChunksPerPass=2");
+        }
+        if (!json.has("maxExpandEntityBlocksPerPass") || maxExpandEntityBlocksPerPass < 1) {
+            maxExpandEntityBlocksPerPass = 16;
+            changed = true;
+            notes.add("maxExpandEntityBlocksPerPass=16");
+        }
+        if (!json.has("expandHysteresisPasses") || expandHysteresisPasses < 1) {
+            expandHysteresisPasses = 2;
+            changed = true;
+            notes.add("expandHysteresisPasses=2");
+        }
+        if (!json.has("worldPassBudgetMs") || worldPassBudgetMs < 0) {
+            worldPassBudgetMs = 8;
+            changed = true;
+            notes.add("worldPassBudgetMs=8");
+        }
+        if (!json.has("pressureExitRequiresLastTick")) {
+            pressureExitRequiresLastTick = true;
+            changed = true;
+            notes.add("pressureExitRequiresLastTick=true");
         }
 
         if (configVersion != CURRENT_CONFIG_VERSION) {
@@ -470,6 +529,21 @@ public class QuantumHyConfig {
         }
         if (minViewRadiusDelta < 1) {
             minViewRadiusDelta = 1;
+        }
+        if (maxExpandChunksPerPass < 1) {
+            maxExpandChunksPerPass = 1;
+        }
+        if (maxShrinkChunksPerPass < 1) {
+            maxShrinkChunksPerPass = 1;
+        }
+        if (maxExpandEntityBlocksPerPass < 1) {
+            maxExpandEntityBlocksPerPass = 16;
+        }
+        if (expandHysteresisPasses < 1) {
+            expandHysteresisPasses = 2;
+        }
+        if (worldPassBudgetMs < 0) {
+            worldPassBudgetMs = 8;
         }
         if (streamingBacklogThreshold < 0) {
             streamingBacklogThreshold = 0;

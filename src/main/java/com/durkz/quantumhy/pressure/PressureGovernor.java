@@ -2,6 +2,7 @@ package com.durkz.quantumhy.pressure;
 
 import com.durkz.quantumhy.QuantumHyPlugin;
 import com.durkz.quantumhy.config.QuantumHyConfig;
+import com.durkz.quantumhy.view.ViewAdaptPolicy;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.metrics.metric.HistoricMetric;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
@@ -76,19 +77,21 @@ public final class PressureGovernor {
             double densityHighPerChunk,
             int maxChunksPerSecond,
             int maxChunksPerTick,
-            double shrinkInvRange
+            double shrinkInvRange,
+            boolean pressured
     ) {
         @Nonnull
         public static ViewPassContext fromConfig(@Nonnull QuantumHyConfig config) {
             return of(config.densityLowPerChunk, config.densityHighPerChunk,
-                    config.maxChunksPerSecond, config.maxChunksPerTick);
+                    config.maxChunksPerSecond, config.maxChunksPerTick, false);
         }
 
         @Nonnull
-        static ViewPassContext of(double low, double high, int maxChunksPerSecond, int maxChunksPerTick) {
+        static ViewPassContext of(double low, double high, int maxChunksPerSecond, int maxChunksPerTick,
+                boolean pressured) {
             double span = high - low;
             return new ViewPassContext(low, high, maxChunksPerSecond, maxChunksPerTick,
-                    span > 0.0D ? 1.0D / span : 0.0D);
+                    span > 0.0D ? 1.0D / span : 0.0D, pressured);
         }
 
         /** 0 below low threshold, 1 at or above high; smoothstep between. */
@@ -110,7 +113,8 @@ public final class PressureGovernor {
                 densityLowPerChunk(config, snap),
                 densityHighPerChunk(config, snap),
                 writeChunkRate ? maxChunksPerSecond(config, snap) : 0,
-                writeChunkRate ? maxChunksPerTick(config, snap) : 0);
+                writeChunkRate ? maxChunksPerTick(config, snap) : 0,
+                snap.pressured());
     }
 
     /** Must run on the world's thread. */
@@ -145,7 +149,8 @@ public final class PressureGovernor {
             } else {
                 state.aboveEnterPasses = 0;
             }
-        } else if (msptAvg <= config.pressureMsptExit) {
+        } else if (ViewAdaptPolicy.pressureBelowExit(msptAvg, msptLast, config.pressureMsptExit,
+                config.pressureExitRequiresLastTick)) {
             state.belowExitPasses++;
             if (state.belowExitPasses * interval >= config.pressureCooldownSeconds) {
                 release(world, config, state, "cooldown");

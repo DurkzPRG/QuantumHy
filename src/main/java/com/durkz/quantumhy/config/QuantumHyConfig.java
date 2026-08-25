@@ -29,7 +29,7 @@ public class QuantumHyConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /** Bumped when shipped defaults change; older QuantumHy.json files migrate on load. */
-    private static final int CURRENT_CONFIG_VERSION = 3;
+    private static final int CURRENT_CONFIG_VERSION = 4;
 
     private transient File configFile;
 
@@ -86,16 +86,17 @@ public class QuantumHyConfig {
     public double baselineShrinkFraction = 0.10D;
 
     /**
-     * Extra shrink from how many chunks are loaded or still streaming to this client (render backlog).
-     * Separate from LeanCore hot/sim radius and throughput governance.
+     * Extra shrink from how many sections are loaded or still streaming to this client (render
+     * backlog). Separate from LeanCore hot/sim radius and throughput governance. Thresholds are
+     * section counts: ~0.4 / ~0.9 of a view-8 3D sphere budget (~1718 sections on 0.6).
      */
     public boolean chunkLoadShrinkEnabled = true;
 
-    /** Loaded + loading section count at or below this adds no chunk-load shrink (0.6+ sections). */
-    public int chunkLoadLowChunks = 480;
+    /** Loaded + loading section count at or below this adds no chunk-load shrink. */
+    public int chunkLoadLowChunks = 700;
 
     /** At or above this loaded + loading section count, chunk-load shrink hits full strength. */
-    public int chunkLoadHighChunks = 1120;
+    public int chunkLoadHighChunks = 1550;
 
     /**
      * Smoothing for the density signal: weight of the newest sample in an exponential moving average,
@@ -139,30 +140,40 @@ public class QuantumHyConfig {
     public int maxVisibleEntitiesPerPlayer = 80;
 
     /**
-     * Pause environmental spawning while any player has sections streaming to the client
-     * ({@code ChunkTracker.getLoadingSectionsCount() > 0}). Uses the engine spawn pool cooldown.
+     * Pause environmental spawning while any player has a section-stream backlog at or above
+     * {@link #streamingBacklogThreshold}. Uses the engine spawn pool cooldown. A {@code > 0}
+     * gate is too sensitive on 0.6 (local stream up to 2560 sections/s).
      */
     public boolean holdSpawnOnLoadingChunks = true;
 
     /** Minimum change (chunks) before an update is sent, to avoid churn. */
     public int minViewRadiusDelta = 2;
 
-    /** Hold radius cuts while a player is actively streaming at least this many chunks. */
+    /** Hold radius cuts while a player is actively streaming at least this many sections. */
     public boolean respectStreamingGrace = true;
     public int streamingBacklogThreshold = 80;
 
     /**
-     * Smooth how fast chunks stream to each managed client. The hitching you feel moving into fresh
-     * terrain is the client meshing a burst of chunks at once; capping the send rate spreads that out
+     * Smooth how fast sections stream to each managed client. The hitching you feel moving into
+     * fresh terrain is the client meshing a burst at once; capping the send rate spreads that out
      * for fewer stutters, at the cost of slightly slower fill. Set false to leave the engine alone.
+     * When LeanCore has {@code chunkThroughputGovernanceEnabled}, QuantumHy yields this knob.
      */
     public boolean smoothChunkStreaming = true;
 
-    /** Max chunks per second streamed to a managed client. {@code 0} keeps the engine per-connection default (local 256, LAN 128, internet 36). */
+    /**
+     * Max sections per second streamed to a managed client. {@code 0} leaves the connection default
+     * ({@code ChunkTracker.setDefaultMaxSectionsPerSecond}: local 2560, LAN 1280, remote 360 on 0.6).
+     * A positive value is an absolute FPS anti-hitch ceiling (default 128 is far below engine max).
+     */
     public int maxChunksPerSecond = 128;
 
-    /** Max chunks per server tick streamed to a managed client. This is the real anti-hitch lever (engine default is 4). {@code 0} keeps the default. */
-    public int maxChunksPerTick = 2;
+    /**
+     * Max sections per server tick streamed to a managed client. Primary anti-hitch lever (engine
+     * default is 40 on 0.6). {@code 0} leaves the connection default. Default 8 softens bursts
+     * without the extreme pop-in of the old column-era 2/tick.
+     */
+    public int maxChunksPerTick = 8;
 
     /**
      * If LeanCore is installed, QuantumHy detects it on startup and turns off LeanCore's client
@@ -322,13 +333,21 @@ public class QuantumHyConfig {
                 v -> pressureSustainSeconds = v);
         changed |= remapDouble(notes, "pressureDensityMultiplier", pressureDensityMultiplier, 1.35D, 1.45D,
                 v -> pressureDensityMultiplier = v);
-        // 0.6 reports sections (~10× columns); scale old column-era defaults.
-        changed |= remapInt(notes, "chunkLoadLowChunks", chunkLoadLowChunks, 48, 480,
+        // 0.6 reports sections (~10× columns); scale old column-era defaults once.
+        changed |= remapInt(notes, "chunkLoadLowChunks", chunkLoadLowChunks, 48, 700,
                 v -> chunkLoadLowChunks = v);
-        changed |= remapInt(notes, "chunkLoadHighChunks", chunkLoadHighChunks, 112, 1120,
+        changed |= remapInt(notes, "chunkLoadHighChunks", chunkLoadHighChunks, 112, 1550,
+                v -> chunkLoadHighChunks = v);
+        // Post-×10 defaults were still low vs view-8 sphere budget (~1718); re-anchor ~0.4/0.9.
+        changed |= remapInt(notes, "chunkLoadLowChunks", chunkLoadLowChunks, 480, 700,
+                v -> chunkLoadLowChunks = v);
+        changed |= remapInt(notes, "chunkLoadHighChunks", chunkLoadHighChunks, 1120, 1550,
                 v -> chunkLoadHighChunks = v);
         changed |= remapInt(notes, "streamingBacklogThreshold", streamingBacklogThreshold, 8, 80,
                 v -> streamingBacklogThreshold = v);
+        // Column-era anti-hitch 2/tick was extreme vs engine 40; soften to 8.
+        changed |= remapInt(notes, "maxChunksPerTick", maxChunksPerTick, 2, 8,
+                v -> maxChunksPerTick = v);
 
         if (!json.has("densityRingWeighting")) {
             densityRingWeighting = true;
@@ -351,14 +370,14 @@ public class QuantumHyConfig {
             notes.add("chunkLoadShrinkEnabled=true");
         }
         if (!json.has("chunkLoadLowChunks") || chunkLoadLowChunks <= 0) {
-            chunkLoadLowChunks = 480;
+            chunkLoadLowChunks = 700;
             changed = true;
-            notes.add("chunkLoadLowChunks=480");
+            notes.add("chunkLoadLowChunks=700");
         }
         if (!json.has("chunkLoadHighChunks") || chunkLoadHighChunks <= 0) {
-            chunkLoadHighChunks = 1120;
+            chunkLoadHighChunks = 1550;
             changed = true;
-            notes.add("chunkLoadHighChunks=1120");
+            notes.add("chunkLoadHighChunks=1550");
         }
 
         if (configVersion != CURRENT_CONFIG_VERSION) {
@@ -426,10 +445,10 @@ public class QuantumHyConfig {
             baselineShrinkFraction = 0.10D;
         }
         if (chunkLoadHighChunks <= 0) {
-            chunkLoadHighChunks = 1120;
+            chunkLoadHighChunks = 1550;
         }
         if (chunkLoadLowChunks < 0) {
-            chunkLoadLowChunks = 480;
+            chunkLoadLowChunks = 700;
         }
         if (chunkLoadLowChunks >= chunkLoadHighChunks) {
             chunkLoadLowChunks = Math.max(0, chunkLoadHighChunks / 2);

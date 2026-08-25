@@ -169,8 +169,9 @@ public final class ClientViewRadiusController {
     }
 
     /**
-     * Caps how fast chunks stream to this client, so a freshly opened radius arrives spread out
+     * Caps how fast sections stream to this client, so a freshly opened radius arrives spread out
      * instead of as one burst the client has to mesh at once. Idempotent: only writes on change.
+     * {@code 0} for either cap means leave the connection default alone.
      */
     private void applyChunkStreamingSmoothing(@Nullable ChunkTracker tracker, ViewPassContext pass) {
         if (!LeanCoreBridge.shouldQuantumHyWriteChunkRate(config) || tracker == null) {
@@ -200,10 +201,12 @@ public final class ClientViewRadiusController {
         if (chunkStore == null) {
             return Density.NONE;
         }
+        double playerY = transform.getPosition().y;
         int centerX = ChunkUtil.chunkCoordinate(transform.getPosition().x);
         int centerZ = ChunkUtil.chunkCoordinate(transform.getPosition().z);
         int radius = Math.max(0, cfg.densityScanChunkRadius);
         int radiusSq = radius * radius;
+        int maxVert = Math.max(0, cfg.maxEntityVerticalDistance);
 
         int rawEntities = 0;
         double weightedEntities = 0;
@@ -224,6 +227,9 @@ public final class ClientViewRadiusController {
                 chunks++;
                 int count = 0;
                 for (int sectionY = ChunkUtil.MIN_SECTION; sectionY < ChunkUtil.HEIGHT_SECTIONS; sectionY++) {
+                    if (maxVert > 0 && !sectionOverlapsVerticalWindow(sectionY, playerY, maxVert)) {
+                        continue;
+                    }
                     Ref<ChunkStore> sectionRef = chunkStore.getChunkSectionReference(chunkX, sectionY, chunkZ);
                     if (sectionRef == null) {
                         continue;
@@ -249,6 +255,18 @@ public final class ClientViewRadiusController {
             }
         }
         return new Density(rawEntities, weightedEntities, chunks);
+    }
+
+    /**
+     * True when section {@code sectionY} overlaps the same vertical window EntityCull uses
+     * ({@code |dy| <= maxEntityVerticalDistance}). Skips cave/ceiling bands the client already drops.
+     */
+    static boolean sectionOverlapsVerticalWindow(int sectionY, double playerY, int maxVertBlocks) {
+        int sectionMin = sectionY * ChunkUtil.SIZE;
+        int sectionMax = sectionMin + ChunkUtil.SIZE;
+        double windowMin = playerY - maxVertBlocks;
+        double windowMax = playerY + maxVertBlocks;
+        return sectionMax > windowMin && sectionMin < windowMax;
     }
 
     private static double chunkLoadShrinkFraction(@Nullable ChunkTracker tracker, QuantumHyConfig cfg) {

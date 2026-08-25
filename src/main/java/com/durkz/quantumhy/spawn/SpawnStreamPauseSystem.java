@@ -27,17 +27,17 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
- * Pauses environmental spawning while any player is streaming chunks to the client.
+ * Pauses environmental spawning while any player has a heavy section-stream backlog.
  *
  * Engine flow (see {@link WorldSpawningSystem}, {@code ChunkSpawningSystems},
  * {@code ChunkTracker}): {@code pickRandomChunk} only considers chunks already in
  * {@link com.hypixel.hytale.server.spawning.world.WorldEnvironmentSpawnData#getChunkRefList()}.
- * Chunks in the client's {@code !isLoaded} view ring usually have no server spawn row yet, so
- * per-chunk gating on that ring cannot work. While {@code loadingColumns} is non-empty, the
- * server still runs the spawn loop across every pool chunk the client already has, which competes
- * with chunk IO and shows up as MSPT spikes. Setting {@link ChunkSpawnData#setLastSpawn(long)}
- * on the whole pool makes {@code isOnSpawnCooldown()} skip every picker candidate until streaming
- * finishes.
+ * Chunks in the client's unloaded view ring usually have no server spawn row yet, so
+ * per-chunk gating on that ring cannot work. While {@code getLoadingSectionsCount()} is high,
+ * the server still runs the spawn loop across every pool chunk the client already has, which
+ * competes with chunk IO and shows up as MSPT spikes. Setting {@link ChunkSpawnData#setLastSpawn(long)}
+ * on the whole pool makes {@code isOnSpawnCooldown()} skip every picker candidate until the
+ * backlog drops below {@link QuantumHyConfig#streamingBacklogThreshold}.
  */
 public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
 
@@ -83,7 +83,7 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
 
         String worldName = world.getName();
         LongOpenHashSet wasCooled = COOLED_BY_WORLD.computeIfAbsent(worldName, ignored -> new LongOpenHashSet());
-        boolean streaming = SpawnChunkPending.anyViewerLoading(world);
+        boolean streaming = SpawnChunkPending.anyViewerBacklogged(world, config.streamingBacklogThreshold);
 
         if (!streaming) {
             STREAM_PAUSE_ACTIVE.put(worldName, new AtomicBoolean(false));
@@ -124,8 +124,8 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
 
         if (config.verboseLog && !wasAlreadyPaused) {
             logger.atInfo().log(String.format(Locale.ROOT,
-                    "spawn pause: environmental spawn held while client streams (world=%s pool=%d)",
-                    worldName, cooledNow.size()));
+                    "spawn pause: environmental spawn held (world=%s pool=%d backlogThreshold=%d)",
+                    worldName, cooledNow.size(), config.streamingBacklogThreshold));
         }
 
         wasCooled.clear();

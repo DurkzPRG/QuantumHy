@@ -135,16 +135,17 @@ public class QuantumCommand extends AbstractCommandCollection {
                 config.pressureTrimClientEffects ? "on" : "off",
                 config.pressureWorldLevers ? "on" : "off"), "#AAAAAA");
         send(ctx, String.format(Locale.ROOT,
-                "spawn pause: %s pause=%s pool=%d cooldowns=%d",
+                "spawn pause: %s pause=%s threshold=%d (section backlog) pool=%d cooldowns=%d",
                 config.holdSpawnOnLoadingChunks ? "on" : "off",
                 worldRow.streamPause() ? "on" : "off",
+                config.streamingBacklogThreshold,
                 worldRow.poolCooled(),
                 SpawnStreamPauseSystem.POOL_COOLDOWNS.sum()), "#AAAAAA");
         send(ctx, String.format(Locale.ROOT,
-                "streaming: smooth=%s maxChunks/s=%s maxChunks/tick=%s chunkRateOwner=%s",
+                "streaming: smooth=%s maxSections/s=%s maxSections/tick=%s chunkRateOwner=%s",
                 config.smoothChunkStreaming,
-                config.maxChunksPerSecond > 0 ? String.valueOf(config.maxChunksPerSecond) : "default",
-                config.maxChunksPerTick > 0 ? String.valueOf(config.maxChunksPerTick) : "default",
+                config.maxChunksPerSecond > 0 ? String.valueOf(config.maxChunksPerSecond) : "connection-default",
+                config.maxChunksPerTick > 0 ? String.valueOf(config.maxChunksPerTick) : "connection-default",
                 LeanCoreBridge.chunkRateOwnerLabel(config)), "#AAAAAA");
 
         String lean = String.format(Locale.ROOT, "view=%s | %s",

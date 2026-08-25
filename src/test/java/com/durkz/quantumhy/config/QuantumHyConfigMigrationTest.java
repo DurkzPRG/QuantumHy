@@ -42,6 +42,16 @@ class QuantumHyConfigMigrationTest {
             }
             """;
 
+    private static final String V3_SECTION_DEFAULTS = """
+            {
+              "chunkLoadLowChunks": 480,
+              "chunkLoadHighChunks": 1120,
+              "maxChunksPerTick": 2,
+              "streamingBacklogThreshold": 80,
+              "configVersion": 3
+            }
+            """;
+
     @Test
     void migratesLegacy020WithoutConfigVersion(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("QuantumHy.json"), LEGACY_020, StandardCharsets.UTF_8);
@@ -56,11 +66,12 @@ class QuantumHyConfigMigrationTest {
         assertEquals(48.0D, config.pressureMsptEnter, 1e-9);
         assertTrue(config.densityRingWeighting);
         assertEquals(0.10D, config.baselineShrinkFraction, 1e-9);
-        assertEquals(480, config.chunkLoadLowChunks);
-        assertEquals(1120, config.chunkLoadHighChunks);
+        assertEquals(700, config.chunkLoadLowChunks);
+        assertEquals(1550, config.chunkLoadHighChunks);
         assertEquals(80, config.streamingBacklogThreshold);
-        assertEquals(3, config.configVersion);
-        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 3"));
+        assertEquals(8, config.maxChunksPerTick);
+        assertEquals(4, config.configVersion);
+        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 4"));
     }
 
     @Test
@@ -71,9 +82,22 @@ class QuantumHyConfigMigrationTest {
 
         assertEquals(1.0D, config.densityLowPerChunk, 1e-9);
         assertEquals(4.0D, config.densityHighPerChunk, 1e-9);
-        assertEquals(480, config.chunkLoadLowChunks);
-        assertEquals(1120, config.chunkLoadHighChunks);
+        assertEquals(700, config.chunkLoadLowChunks);
+        assertEquals(1550, config.chunkLoadHighChunks);
         assertEquals(80, config.streamingBacklogThreshold);
-        assertEquals(3, config.configVersion);
+        assertEquals(8, config.maxChunksPerTick);
+        assertEquals(4, config.configVersion);
+    }
+
+    @Test
+    void migratesV3SectionDefaultsToView8Budget(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("QuantumHy.json"), V3_SECTION_DEFAULTS, StandardCharsets.UTF_8);
+
+        QuantumHyConfig config = QuantumHyConfig.load(dir);
+
+        assertEquals(700, config.chunkLoadLowChunks);
+        assertEquals(1550, config.chunkLoadHighChunks);
+        assertEquals(8, config.maxChunksPerTick);
+        assertEquals(4, config.configVersion);
     }
 }

@@ -24,17 +24,21 @@ Two honest limits:
 ## What it does
 
 Every few seconds it checks how crowded the area around each player is (lots of entities means
-expensive to render) and sets the client view radius to match:
+expensive to render) and turns that into one shrink factor for two levers: chunk view radius and
+entity stream radius.
 
-- Out in the open with nothing around: radius can expand back, but only after load is calm and you are not flying or hitching.
-- Packed area with tons of stuff: it pulls your view in toward the minimum, so your FPS doesn't
-  tank exactly where it normally would.
-- Still loading chunks (just joined, or moving fast): it skips the density scan and holds expand,
-  so it doesn't make the client drop chunks it's busy loading.
+- Packed area: both levers pull in toward the minimum. At full shrink the entity radius drops to
+  the floor in one pass, not over many ticks.
+- Out in the open: expand is allowed only after load has been calm for a couple of passes, at least
+  half the density scan is loaded, you are not flying, and the world is not hitching. Radius never
+  jumps from min to full in one pass (at most +1 chunk per check).
+- Joining, streaming, or moving fast: it skips the density walk and holds expand so the client is
+  not told to drop chunks it is still loading.
+- World hitching (high MSPT): expand stays frozen and shrink can step faster until both the recent
+  average and the last tick are calm.
 
-Out of the box there's no hard cap, so you lose nothing in the open and only get trimmed when it's
-crowded. If you'd rather trade some view distance for FPS everywhere, set `targetClientViewRadius`
-above 0.
+Out of the box there's no hard cap. If you'd rather trade some view distance for FPS everywhere,
+set `targetClientViewRadius` above 0.
 
 It also smooths how fast chunks stream to you, so moving into fresh terrain arrives spread out
 instead of in one burst that makes the client hitch. That's the `smoothChunkStreaming` keys below.
@@ -211,7 +215,7 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `densityRingEdgeWeight` | `0.55` | Ring weight at the scan edge when ring weighting is on (`1.0` = flat count). |
 | `baselineShrinkFraction` | `0.10` | Minimum shrink even in "open" density (`0` = off). |
 | `chunkLoadShrinkEnabled` | `true` | Extra shrink from loaded + streaming section count (render backlog). |
-| `chunkLoadLowChunks` | `700` | Loaded + loading **sections** (0.6+) at or below this: no chunk-load shrink. |
+| `chunkLoadLowChunks` | `700` | Loaded + loading **sections** at or below this: no chunk-load shrink. |
 | `chunkLoadHighChunks` | `1550` | At or above this section count: chunk-load shrink hits full strength. |
 | `densitySmoothing` | `0.4` | Smooths the density signal so a moving player's view doesn't flip-flop. Lower is smoother; `1.0` is off. |
 | `adaptEntityRadius` | `true` | Also shrink how far entities are streamed (not just chunks). The big win in mob-heavy spots. |
@@ -228,10 +232,10 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `worldPassBudgetMs` | `8` | Wall-clock budget for radius writes on the world thread. `0` disables the cap. |
 | `pressureExitRequiresLastTick` | `true` | Pressure only exits when both the 10s MSPT average and the last tick are calm. |
 | `respectStreamingGrace` | `true` | Don't shrink while you're still loading chunks. |
-| `streamingBacklogThreshold` | `80` | How many loading **sections** (0.6+) counts as "still streaming". |
+| `streamingBacklogThreshold` | `80` | How many loading **sections** counts as "still streaming". |
 | `smoothChunkStreaming` | `true` | Spread chunk streaming out so moving into new terrain doesn't hitch. |
 | `maxChunksPerSecond` | `128` | Cap on sections streamed per second to a managed client. `0` keeps the engine default. |
-| `maxChunksPerTick` | `8` | Cap on sections streamed per tick (engine default is 40 on 0.6). `0` keeps the default. |
+| `maxChunksPerTick` | `8` | Cap on sections streamed per tick. `0` keeps the engine default. |
 | `leanCoreTakeover` | `true` | If LeanCore is installed, take the view radius over from it (see below). |
 | `yieldToLeanCoreViewRadius` | `false` | The opposite: leave the view radius to LeanCore (see below). |
 | `pressureGovernorEnabled` | `true` | Tighten render levers when world MSPT stays high. |
@@ -293,7 +297,7 @@ You need a Hytale install (that's where `HytaleServer.jar` comes from) and JDK 2
 ./gradlew build
 ```
 
-The jar lands in `build/libs/`. Drop it in `%AppData%\Hytale\data\release\Mods\` to test it on Hytale 0.6.
+The jar lands in `build/libs/`. Drop it in your world's `mods/` folder.
 
 ## Links
 

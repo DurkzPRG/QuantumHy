@@ -26,11 +26,11 @@ Two honest limits:
 Every few seconds it checks how crowded the area around each player is (lots of entities means
 expensive to render) and sets the client view radius to match:
 
-- Out in the open with nothing around: you get your full view radius back.
+- Out in the open with nothing around: radius can expand back, but only after load is calm and you are not flying or hitching.
 - Packed area with tons of stuff: it pulls your view in toward the minimum, so your FPS doesn't
   tank exactly where it normally would.
-- Still loading chunks (just joined, or moving fast): it leaves your view alone, so it doesn't make
-  the client drop chunks it's busy loading.
+- Still loading chunks (just joined, or moving fast): it skips the density scan and holds expand,
+  so it doesn't make the client drop chunks it's busy loading.
 
 Out of the box there's no hard cap, so you lose nothing in the open and only get trimmed when it's
 crowded. If you'd rather trade some view distance for FPS everywhere, set `targetClientViewRadius`
@@ -198,7 +198,7 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | Key | Default | What it does |
 | --- | --- | --- |
 | `enabled` | `true` | Turn the whole thing on or off. |
-| `verboseLog` | `true` | Log every pass with each player's density and view decision. |
+| `verboseLog` | `false` | Log every pass with each player's density and view decision. Off on new installs. |
 | `tickIntervalSeconds` | `5` | How often it re-checks each player. |
 | `initialDelaySeconds` | `20` | Wait this long after start before the first pass. |
 | `targetClientViewRadius` | `0` | Hard cap in chunks. `0` means no cap, just adapt. |
@@ -210,9 +210,9 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `densityRingWeighting` | `true` | Count center chunks fully, outer scan rings less (no per-species tables). |
 | `densityRingEdgeWeight` | `0.55` | Ring weight at the scan edge when ring weighting is on (`1.0` = flat count). |
 | `baselineShrinkFraction` | `0.10` | Minimum shrink even in "open" density (`0` = off). |
-| `chunkLoadShrinkEnabled` | `true` | Extra shrink from loaded + streaming chunk count (render backlog). |
-| `chunkLoadLowChunks` | `480` | Loaded + loading **sections** (0.6+) at or below this: no chunk-load shrink. |
-| `chunkLoadHighChunks` | `1120` | At or above this section count: chunk-load shrink hits full strength. |
+| `chunkLoadShrinkEnabled` | `true` | Extra shrink from loaded + streaming section count (render backlog). |
+| `chunkLoadLowChunks` | `700` | Loaded + loading **sections** (0.6+) at or below this: no chunk-load shrink. |
+| `chunkLoadHighChunks` | `1550` | At or above this section count: chunk-load shrink hits full strength. |
 | `densitySmoothing` | `0.4` | Smooths the density signal so a moving player's view doesn't flip-flop. Lower is smoother; `1.0` is off. |
 | `adaptEntityRadius` | `true` | Also shrink how far entities are streamed (not just chunks). The big win in mob-heavy spots. |
 | `minEntityViewBlocks` | `48` | Never stream entities closer than this, in blocks (16 blocks = 1 chunk). |
@@ -220,12 +220,18 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `maxEntityVerticalDistance` | `32` | Drop entities too far above/below you from the stream (caves, ceilings). `0` = off. |
 | `maxVisibleEntitiesPerPlayer` | `80` | Cap streamed entities per player in crowds (`0` = off). |
 | `holdSpawnOnLoadingChunks` | `true` | Pause environmental spawning while any player has chunks streaming to the client. |
-| `minViewRadiusDelta` | `2` | Don't bother changing the view for tiny differences. |
+| `minViewRadiusDelta` | `2` | Don't bother changing the view for tiny differences. Ramped +1 expands still apply. |
+| `maxExpandChunksPerPass` | `1` | Max chunks the client view radius may increase in one pass. |
+| `maxShrinkChunksPerPass` | `2` | Max chunks it may decrease in one pass (doubled under MSPT pressure). |
+| `maxExpandEntityBlocksPerPass` | `16` | Max entity-stream blocks the radius may increase in one pass. |
+| `expandHysteresisPasses` | `2` | Calm passes required before an expand is allowed. |
+| `worldPassBudgetMs` | `8` | Wall-clock budget for radius writes on the world thread. `0` disables the cap. |
+| `pressureExitRequiresLastTick` | `true` | Pressure only exits when both the 10s MSPT average and the last tick are calm. |
 | `respectStreamingGrace` | `true` | Don't shrink while you're still loading chunks. |
 | `streamingBacklogThreshold` | `80` | How many loading **sections** (0.6+) counts as "still streaming". |
 | `smoothChunkStreaming` | `true` | Spread chunk streaming out so moving into new terrain doesn't hitch. |
-| `maxChunksPerSecond` | `128` | Cap on chunks streamed per second to a managed client. `0` keeps the engine default. |
-| `maxChunksPerTick` | `2` | Cap on chunks streamed per tick. This is the real anti-hitch lever (engine default is 4). `0` keeps the default. |
+| `maxChunksPerSecond` | `128` | Cap on sections streamed per second to a managed client. `0` keeps the engine default. |
+| `maxChunksPerTick` | `8` | Cap on sections streamed per tick (engine default is 40 on 0.6). `0` keeps the default. |
 | `leanCoreTakeover` | `true` | If LeanCore is installed, take the view radius over from it (see below). |
 | `yieldToLeanCoreViewRadius` | `false` | The opposite: leave the view radius to LeanCore (see below). |
 | `pressureGovernorEnabled` | `true` | Tighten render levers when world MSPT stays high. |
@@ -287,7 +293,7 @@ You need a Hytale install (that's where `HytaleServer.jar` comes from) and JDK 2
 ./gradlew build
 ```
 
-The jar lands in `build/libs/`. Drop it in `%AppData%/Hytale/UserData/Mods/` to test it.
+The jar lands in `build/libs/`. Drop it in `%AppData%\Hytale\data\release\Mods\` to test it on Hytale 0.6.
 
 ## Links
 

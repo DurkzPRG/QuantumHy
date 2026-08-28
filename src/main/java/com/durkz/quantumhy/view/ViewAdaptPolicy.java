@@ -105,7 +105,12 @@ public final class ViewAdaptPolicy {
 
     /** At least half the scan disk must be loaded, or "open sky" is just missing terrain. */
     public static boolean densityCovered(int chunks, int radius) {
-        return chunks * 2 >= expectedScanChunks(radius);
+        return densityCoveredColumns(chunks, expectedScanChunks(radius));
+    }
+
+    /** Same coverage check with a precomputed number of scan columns. */
+    public static boolean densityCoveredColumns(int chunks, int expectedChunks) {
+        return chunks * 2 >= expectedChunks;
     }
 
     /**

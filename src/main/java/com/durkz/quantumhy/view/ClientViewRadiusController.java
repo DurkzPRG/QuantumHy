@@ -38,11 +38,14 @@ public final class ClientViewRadiusController {
     private static final int ENTITY_BLOCKS_APPLY_STEP = 4;
 
     private final QuantumHyConfig config;
+    private final DensityScanPlan densityScanPlan;
     private final Map<UUID, PlayerState> players = new ConcurrentHashMap<>();
     private final Map<UUID, Decision> lastDecisions = new ConcurrentHashMap<>();
 
     public ClientViewRadiusController(QuantumHyConfig config) {
         this.config = config;
+        this.densityScanPlan = DensityScanPlan.of(config.densityScanChunkRadius,
+                config.densityRingWeighting, config.densityRingEdgeWeight);
     }
 
     /** What QuantumHy decided for one player on a pass, for both the actuation and the log. */
@@ -157,11 +160,11 @@ public final class ClientViewRadiusController {
         } else if (skipScan) {
             density = Density.DEFERRED;
         } else {
-            density = sampleDensity(playerRef, world, config, state);
+            density = sampleDensity(playerRef, world, state);
         }
         boolean allowWrites = System.nanoTime() < writeDeadlineNanos;
         boolean sampleCovered = density.valid()
-                && ViewAdaptPolicy.densityCovered(density.chunks(), config.densityScanChunkRadius);
+                && ViewAdaptPolicy.densityCoveredColumns(density.chunks(), densityScanPlan.columns());
 
         if (!density.valid() && density != Density.DEFERRED) {
             if (haveChunkPos && state != null) {
@@ -312,7 +315,7 @@ public final class ClientViewRadiusController {
     }
 
     /** Counts entities in the chunks around a player as a stand-in for client render cost. */
-    private Density sampleDensity(PlayerRef ref, World world, QuantumHyConfig cfg, PlayerState state) {
+    private Density sampleDensity(PlayerRef ref, World world, PlayerState state) {
         Transform transform = ref.getTransform();
         if (transform == null || transform.getPosition() == null || world == null || !world.isAlive()) {
             return Density.NONE;
@@ -328,21 +331,14 @@ public final class ClientViewRadiusController {
                 && state.cacheChunkX == centerX && state.cacheChunkZ == centerZ) {
             return state.cachedDensity;
         }
-        int radius = Math.max(0, cfg.densityScanChunkRadius);
-        int radiusSq = radius * radius;
-        int maxVert = Math.max(0, cfg.maxEntityVerticalDistance);
+        int maxVert = Math.max(0, config.maxEntityVerticalDistance);
 
         int rawEntities = 0;
         double weightedEntities = 0;
         int chunks = 0;
-        for (int dz = -radius; dz <= radius; dz++) {
-            int dzSq = dz * dz;
-            for (int dx = -radius; dx <= radius; dx++) {
-                if (dx * dx + dzSq > radiusSq) {
-                    continue;
-                }
-                int chunkX = centerX + dx;
-                int chunkZ = centerZ + dz;
+        for (int column = 0; column < densityScanPlan.columns(); column++) {
+                int chunkX = centerX + densityScanPlan.dx(column);
+                int chunkZ = centerZ + densityScanPlan.dz(column);
                 long index = ChunkUtil.indexChunk(chunkX, chunkZ);
                 WorldChunk worldChunk = chunkStore.getChunkComponent(index, WorldChunk.getComponentType());
                 if (worldChunk == null) {
@@ -369,14 +365,7 @@ public final class ClientViewRadiusController {
                     continue;
                 }
                 rawEntities += count;
-                double ringWeight = 1.0D;
-                if (cfg.densityRingWeighting && radius > 0) {
-                    double dist = Math.sqrt((double) dx * dx + (double) dz * dz);
-                    double t = Math.min(1.0D, dist / radius);
-                    ringWeight = 1.0D - t * (1.0D - cfg.densityRingEdgeWeight);
-                }
-                weightedEntities += count * ringWeight;
-            }
+                weightedEntities += count * densityScanPlan.weight(column);
         }
         Density sampled = new Density(rawEntities, weightedEntities, chunks);
         if (state != null) {

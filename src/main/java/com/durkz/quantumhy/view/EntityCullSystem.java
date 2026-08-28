@@ -23,8 +23,6 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.IdentityHashMap;
-import java.util.List;
-import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -51,6 +49,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
     private final ComponentType<EntityStore, TransformComponent> transformComponentType;
     private final Query<EntityStore> query;
     private final Set<Dependency<EntityStore>> dependencies;
+    private final ThreadLocal<NearestScratch> nearestScratch = ThreadLocal.withInitial(NearestScratch::new);
 
     public EntityCullSystem(@Nonnull ComponentType<EntityStore, EntityTrackerSystems.EntityViewer> entityViewerComponentType,
                             @Nonnull QuantumHyConfig config) {
@@ -102,6 +101,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         final int maxVertical = PressureGovernor.verticalDistance(worldName, config.maxEntityVerticalDistance);
         if (maxVertical > 0) {
             final int maxVerticalSq = maxVertical * maxVertical;
+            int culled = 0;
             for (final var iterator = viewer.visible.iterator(); iterator.hasNext(); ) {
                 final Ref<EntityStore> targetRef = iterator.next();
                 if (!targetRef.isValid()) {
@@ -119,9 +119,10 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
                 final double dy = targetTransform.getPosition().y - py;
                 if (dy * dy > maxVerticalSq) {
                     iterator.remove();
-                    recordVerticalCull(worldName);
+                    culled++;
                 }
             }
+            recordVerticalCull(worldName, culled);
         }
 
         final int cap = config.maxVisibleEntitiesPerPlayer;
@@ -130,14 +131,20 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         }
     }
 
-    private static void recordVerticalCull(@Nonnull String worldName) {
-        VERTICAL_CULLED.increment();
-        VERTICAL_SINCE_REPORT.computeIfAbsent(worldName, ignored -> new AtomicLong()).incrementAndGet();
+    private static void recordVerticalCull(@Nonnull String worldName, int count) {
+        if (count <= 0) {
+            return;
+        }
+        VERTICAL_CULLED.add(count);
+        VERTICAL_SINCE_REPORT.computeIfAbsent(worldName, ignored -> new AtomicLong()).addAndGet(count);
     }
 
-    private static void recordCapCull(@Nonnull String worldName) {
-        CAP_CULLED.increment();
-        CAP_SINCE_REPORT.computeIfAbsent(worldName, ignored -> new AtomicLong()).incrementAndGet();
+    private static void recordCapCull(@Nonnull String worldName, int count) {
+        if (count <= 0) {
+            return;
+        }
+        CAP_CULLED.add(count);
+        CAP_SINCE_REPORT.computeIfAbsent(worldName, ignored -> new AtomicLong()).addAndGet(count);
     }
 
     public static long drainVerticalSinceReport(@Nonnull String worldName) {
@@ -158,9 +165,9 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
             return;
         }
 
-        // Max-heap of the cap nearest: head is the farthest among the kept set.
-        PriorityQueue<Candidate> nearest = new PriorityQueue<>(cap,
-                (a, b) -> Double.compare(b.distanceSq, a.distanceSq));
+        // Max-heap of the cap nearest. Scratch is thread-local because this system may tick in parallel.
+        NearestScratch nearest = nearestScratch.get();
+        nearest.reset(cap);
         for (final Ref<EntityStore> ref : viewer.visible) {
             if (!ref.isValid() || commandBuffer.getArchetype(ref).contains(playerRefComponentType)) {
                 continue;
@@ -170,21 +177,13 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
                 continue;
             }
             double distSq = targetTransform.getPosition().distanceSquared(position);
-            if (nearest.size() < cap) {
-                nearest.add(new Candidate(ref, distSq));
-            } else if (distSq < nearest.peek().distanceSq) {
-                nearest.poll();
-                nearest.add(new Candidate(ref, distSq));
-            }
+            nearest.offer(ref, distSq);
         }
         if (nearest.isEmpty()) {
             return;
         }
 
-        Set<Ref<EntityStore>> keep = Collections.newSetFromMap(new IdentityHashMap<>(nearest.size()));
-        for (Candidate candidate : nearest) {
-            keep.add(candidate.ref);
-        }
+        nearest.buildKeepSet();
 
         int culled = 0;
         for (final var iterator = viewer.visible.iterator(); iterator.hasNext(); ) {
@@ -192,16 +191,103 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
             if (!ref.isValid() || commandBuffer.getArchetype(ref).contains(playerRefComponentType)) {
                 continue;
             }
-            if (!keep.contains(ref)) {
+            if (!nearest.keeps(ref)) {
                 iterator.remove();
                 culled++;
             }
         }
-        for (int i = 0; i < culled; i++) {
-            recordCapCull(worldName);
-        }
+        recordCapCull(worldName, culled);
+        nearest.clear();
     }
 
-    private record Candidate(Ref<EntityStore> ref, double distanceSq) {
+    /** Allocation-free max heap and identity keep set, reused once per worker thread. */
+    private static final class NearestScratch {
+        private Object[] refs = new Object[0];
+        private double[] distances = new double[0];
+        private final IdentityHashMap<Object, Boolean> keep = new IdentityHashMap<>();
+        private int size;
+        private int capacity;
+
+        void reset(int requestedCapacity) {
+            if (refs.length < requestedCapacity) {
+                int newCapacity = Math.max(requestedCapacity, refs.length * 2 + 8);
+                refs = new Object[newCapacity];
+                distances = new double[newCapacity];
+            }
+            size = 0;
+            capacity = requestedCapacity;
+            keep.clear();
+        }
+
+        void offer(Ref<EntityStore> ref, double distanceSq) {
+            if (size < capacity) {
+                int index = size++;
+                refs[index] = ref;
+                distances[index] = distanceSq;
+                siftUp(index);
+            } else if (distanceSq < distances[0]) {
+                refs[0] = ref;
+                distances[0] = distanceSq;
+                siftDown(0);
+            }
+        }
+
+        boolean isEmpty() {
+            return size == 0;
+        }
+
+        void buildKeepSet() {
+            for (int i = 0; i < size; i++) {
+                keep.put(refs[i], Boolean.TRUE);
+            }
+        }
+
+        boolean keeps(Ref<EntityStore> ref) {
+            return keep.containsKey(ref);
+        }
+
+        void clear() {
+            for (int i = 0; i < size; i++) {
+                refs[i] = null;
+            }
+            size = 0;
+            keep.clear();
+        }
+
+        private void siftUp(int index) {
+            while (index > 0) {
+                int parent = (index - 1) >>> 1;
+                if (distances[parent] >= distances[index]) {
+                    return;
+                }
+                swap(parent, index);
+                index = parent;
+            }
+        }
+
+        private void siftDown(int index) {
+            int half = size >>> 1;
+            while (index < half) {
+                int child = (index << 1) + 1;
+                int right = child + 1;
+                if (right < size && distances[right] > distances[child]) {
+                    child = right;
+                }
+                if (distances[index] >= distances[child]) {
+                    return;
+                }
+                swap(index, child);
+                index = child;
+            }
+        }
+
+        private void swap(int a, int b) {
+            Object ref = refs[a];
+            refs[a] = refs[b];
+            refs[b] = ref;
+            double distance = distances[a];
+            distances[a] = distances[b];
+            distances[b] = distance;
+        }
     }
 }

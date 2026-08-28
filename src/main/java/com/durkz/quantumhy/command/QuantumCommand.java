@@ -33,7 +33,6 @@ public class QuantumCommand extends AbstractCommandCollection {
         addAliases("q", "qhy");
         addSubCommand(new StatusSubCommand(config, plugin));
         addSubCommand(new HelpSubCommand());
-        addSubCommand(new PerfSubCommand());
     }
 
     private static final class StatusSubCommand extends CommandBase {

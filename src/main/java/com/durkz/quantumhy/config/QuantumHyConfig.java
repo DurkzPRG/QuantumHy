@@ -39,6 +39,9 @@ public class QuantumHyConfig {
     /** Detailed server log: one line per world per pass with each player's density and view decision. */
     public boolean verboseLog = false;
 
+    /** Check the QuantumHy mod page on startup and notify only operators or QuantumHy admins about updates. */
+    public boolean checkForUpdates = true;
+
     /** Seconds between adaptive passes. */
     public int tickIntervalSeconds = 5;
 

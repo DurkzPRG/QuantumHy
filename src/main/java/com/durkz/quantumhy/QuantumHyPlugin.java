@@ -2,14 +2,19 @@ package com.durkz.quantumhy;
 
 import com.durkz.quantumhy.command.QuantumCommand;
 import com.durkz.quantumhy.config.QuantumHyConfig;
+import com.durkz.quantumhy.permissions.QuantumHyPermissions;
 import com.durkz.quantumhy.runtime.FpsRuntime;
 import com.durkz.quantumhy.runtime.RuntimeSnapshot;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
+import com.durkz.quantumhy.update.ModUpdateChecker;
 import com.durkz.quantumhy.view.EntityCullSystem;
 import com.hypixel.hytale.server.core.event.events.ShutdownEvent;
+import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
+import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
+import com.hypixel.hytale.server.core.universe.PlayerRef;
 import org.checkerframework.checker.nullness.compatqual.NonNullDecl;
 
 /** Server-side FPS mod. Trims per-client render load by adapting view radius to nearby density. */
@@ -28,6 +33,7 @@ public class QuantumHyPlugin extends JavaPlugin {
 
         config = QuantumHyConfig.load(getDataDirectory());
 
+        QuantumHyPermissions.register();
         getCommandRegistry().registerCommand(new QuantumCommand(config, this));
 
         if (!config.enabled) {
@@ -52,6 +58,12 @@ public class QuantumHyPlugin extends JavaPlugin {
                 runtime.shutdown();
             }
         });
+        getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, event -> {
+            PlayerRef playerRef = event.getHolder().getComponent(PlayerRef.getComponentType());
+            ModUpdateChecker.getInstance().notifyPlayer(playerRef);
+        });
+        getEventRegistry().registerGlobal(PlayerDisconnectEvent.class,
+                event -> ModUpdateChecker.getInstance().forgetPlayer(event.getPlayerRef().getUuid()));
 
         String configDump = String.format(java.util.Locale.ROOT,
                 "QuantumHy %s setup. config: verboseLog=%s tickInterval=%ds initialDelay=%ds hardCap=%d min=%d "
@@ -96,6 +108,7 @@ public class QuantumHyPlugin extends JavaPlugin {
     @Override
     protected void start() {
         super.start();
+        ModUpdateChecker.getInstance().start(this, config);
         if (runtime != null) {
             runtime.start();
         }
@@ -104,6 +117,7 @@ public class QuantumHyPlugin extends JavaPlugin {
     @Override
     protected void shutdown() {
         stopDevPerfMeterIfPresent();
+        ModUpdateChecker.getInstance().shutdown();
         if (runtime != null) {
             runtime.shutdown();
             runtime = null;

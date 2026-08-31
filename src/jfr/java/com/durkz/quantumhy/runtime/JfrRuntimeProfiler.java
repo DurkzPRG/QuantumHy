@@ -4,7 +4,6 @@ import jdk.jfr.Event;
 import jdk.jfr.Label;
 import jdk.jfr.Name;
 
-/** Developer-only event provider, included by the jfrJar task and never by jar. */
 public final class JfrRuntimeProfiler implements RuntimeProfiler {
 
     @Override
@@ -53,6 +52,7 @@ public final class JfrRuntimeProfiler implements RuntimeProfiler {
 
     @Override
     public void streaming(String tier, int perSecond, int perTick, int loading, int loaded,
+            int loadingDelta, double averageMspt, double lastMspt, String protectionCause,
             long holdMs, boolean changed) {
         StreamingEvent event = new StreamingEvent();
         if (!event.isEnabled()) return;
@@ -61,6 +61,10 @@ public final class JfrRuntimeProfiler implements RuntimeProfiler {
         event.perTick = perTick;
         event.loading = loading;
         event.loaded = loaded;
+        event.loadingDelta = loadingDelta;
+        event.averageMspt = averageMspt;
+        event.lastMspt = lastMspt;
+        event.protectionCause = protectionCause == null ? "" : protectionCause;
         event.holdMs = holdMs;
         event.changed = changed;
         event.commit();
@@ -89,6 +93,7 @@ public final class JfrRuntimeProfiler implements RuntimeProfiler {
     @Name("durkz.QuantumHy.Streaming") @Label("QuantumHy chunk streaming")
     public static final class StreamingEvent extends Event {
         public String tier; public int perSecond; public int perTick; public int loading; public int loaded;
-        public long holdMs; public boolean changed;
+        public int loadingDelta; public double averageMspt; public double lastMspt;
+        public String protectionCause; public long holdMs; public boolean changed;
     }
 }

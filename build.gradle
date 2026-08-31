@@ -108,6 +108,41 @@ tasks.register('jfrJar', Jar) {
     from sourceSets.jfr.output
 }
 
+tasks.register('verifyJfrSourceComments') {
+    group = 'verification'
+    description = 'Fails when tracked JFR source or its public bridge contains comments.'
+    def jfrSources = fileTree('src/jfr') {
+        include '**/*.java'
+    }
+    def jfrBridgeSources = files(
+            'src/main/java/com/durkz/quantumhy/runtime/RuntimeMetrics.java',
+            'src/main/java/com/durkz/quantumhy/runtime/RuntimeProfiler.java')
+    def sourcesToCheck = jfrSources + jfrBridgeSources
+    inputs.files(sourcesToCheck)
+    doLast {
+        def violations = []
+        sourcesToCheck.files.sort { it.path }.each { source ->
+            source.eachLine('UTF-8') { line, number ->
+                if (line =~ /\/\/|\/\*|\*\//) {
+                    violations << "${source.relativeTo(projectDir)}:${number}"
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException('JFR source and public bridge files must not contain comments:\n'
+                    + violations.join('\n'))
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('verifyJfrSourceComments')
+}
+
+tasks.named('jfrClasses') {
+    dependsOn tasks.named('verifyJfrSourceComments')
+}
+
 tasks.register('jmh', JavaExec) {
     dependsOn tasks.named('jmhClasses')
     group = 'verification'

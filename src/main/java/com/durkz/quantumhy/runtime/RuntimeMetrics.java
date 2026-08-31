@@ -2,7 +2,6 @@ package com.durkz.quantumhy.runtime;
 
 import java.util.ServiceLoader;
 
-/** Near-zero-cost profiling bridge. Published builds contain no provider. */
 public final class RuntimeMetrics {
 
     private static final RuntimeProfiler PROFILER = loadProfiler();
@@ -39,10 +38,12 @@ public final class RuntimeMetrics {
     }
 
     public static void streaming(String tier, int perSecond, int perTick, int loading, int loaded,
+            int loadingDelta, double averageMspt, double lastMspt, String protectionCause,
             long holdMs, boolean changed) {
         RuntimeProfiler profiler = PROFILER;
         if (profiler != null) {
-            profiler.streaming(tier, perSecond, perTick, loading, loaded, holdMs, changed);
+            profiler.streaming(tier, perSecond, perTick, loading, loaded, loadingDelta,
+                    averageMspt, lastMspt, protectionCause, holdMs, changed);
         }
     }
 }

@@ -29,7 +29,7 @@ public class QuantumHyConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /** Bumped when shipped defaults change; older QuantumHy.json files migrate on load. */
-    private static final int CURRENT_CONFIG_VERSION = 6;
+    private static final int CURRENT_CONFIG_VERSION = 7;
 
     private transient File configFile;
 
@@ -60,6 +60,18 @@ public class QuantumHyConfig {
 
     /** Upper bound for QuantumHy's own hard cap (still clamped by the player's server view radius). */
     public int maxClientViewRadius = 32;
+
+    /**
+     * Allow the density controller to reduce terrain view radius during normal play. Disabled by
+     * default so the entity and streaming levers do the work without shortening visible terrain.
+     */
+    public boolean adaptiveTerrainViewEnabled = false;
+
+    /**
+     * Allow a temporary terrain trim when server-visible entity or streaming pressure stays high.
+     * This is only a proxy for client load because the server does not receive client FPS metrics.
+     */
+    public boolean emergencyTerrainTrimEnabled = false;
 
     /** Chunk radius scanned around each player to estimate local render cost. */
     public int densityScanChunkRadius = 4;
@@ -458,6 +470,18 @@ public class QuantumHyConfig {
             pressureExitRequiresLastTick = true;
             changed = true;
             notes.add("pressureExitRequiresLastTick=true");
+        }
+
+        // Terrain preservation is the new default for both fresh and upgraded installations.
+        if (!json.has("adaptiveTerrainViewEnabled") || configVersion < 7) {
+            adaptiveTerrainViewEnabled = false;
+            changed = true;
+            notes.add("adaptiveTerrainViewEnabled=false");
+        }
+        if (!json.has("emergencyTerrainTrimEnabled") || configVersion < 7) {
+            emergencyTerrainTrimEnabled = false;
+            changed = true;
+            notes.add("emergencyTerrainTrimEnabled=false");
         }
 
         if (configVersion != CURRENT_CONFIG_VERSION) {

@@ -2,7 +2,7 @@ package com.durkz.quantumhy.view;
 
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
-import com.durkz.quantumhy.runtime.QuantumHyJfr;
+import com.durkz.quantumhy.runtime.RuntimeMetrics;
 import com.hypixel.hytale.math.util.ChunkUtil;
 import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
@@ -32,7 +32,6 @@ public final class StreamRateController {
 
     private final QuantumHyConfig config;
     private final Map<UUID, PlayerStreamState> players = new ConcurrentHashMap<>();
-    private final Map<UUID, Applied> lastApplied = new ConcurrentHashMap<>();
 
     public StreamRateController(@Nonnull QuantumHyConfig config) {
         this.config = config;
@@ -43,13 +42,15 @@ public final class StreamRateController {
         if (playerId == null) {
             return Applied.IDLE;
         }
-        Applied applied = lastApplied.get(playerId);
-        return applied == null ? Applied.IDLE : applied;
+        PlayerStreamState state = players.get(playerId);
+        return state == null
+                ? Applied.IDLE
+                : new Applied(state.appliedTier, state.appliedPerSecond, state.appliedPerTick,
+                state.lastLoading, state.lastLoaded);
     }
 
     public void retain(@Nonnull Set<UUID> online) {
         players.entrySet().removeIf(entry -> !online.contains(entry.getKey()));
-        lastApplied.keySet().retainAll(online);
     }
 
     /**
@@ -67,9 +68,6 @@ public final class StreamRateController {
 
         if (!LeanCoreBridge.shouldQuantumHyWriteChunkRate(config)) {
             restore(tracker, state);
-            if (playerId != null) {
-                lastApplied.remove(playerId);
-            }
             return;
         }
         if (tracker == null || state == null) {
@@ -130,7 +128,7 @@ public final class StreamRateController {
         boolean tierChanged = state.tier != outcome.tier();
         if (changed || tierChanged) {
             long holdLeft = Math.max(0L, outcome.holdUntilMs() - nowMs);
-            QuantumHyJfr.streaming(
+            RuntimeMetrics.streaming(
                     outcome.tier().name(),
                     outcome.perSecond(),
                     outcome.perTick(),
@@ -151,10 +149,10 @@ public final class StreamRateController {
             state.lastChunkX = chunkX;
             state.lastChunkZ = chunkZ;
         }
-        if (playerId != null) {
-            lastApplied.put(playerId, new Applied(
-                    outcome.tier().name(), outcome.perSecond(), outcome.perTick(), loading, loaded));
-        }
+        state.appliedTier = outcome.tier().name();
+        state.appliedPerSecond = outcome.perSecond();
+        state.appliedPerTick = outcome.perTick();
+        state.lastLoaded = loaded;
     }
 
     public void restoreAll(@Nullable Iterable<PlayerRef> onlinePlayers) {
@@ -183,6 +181,9 @@ public final class StreamRateController {
         state.hasBaseline = false;
         state.tier = StreamCatchUpPolicy.Tier.CRUISE;
         state.holdUntilMs = 0L;
+        state.appliedTier = "off";
+        state.appliedPerSecond = state.baselinePerSecond;
+        state.appliedPerTick = state.baselinePerTick;
     }
 
     private static final class PlayerStreamState {
@@ -198,5 +199,9 @@ public final class StreamRateController {
         int baselinePerSecond;
         int baselinePerTick;
         boolean hasBaseline;
+        String appliedTier = "off";
+        int appliedPerSecond;
+        int appliedPerTick;
+        int lastLoaded;
     }
 }

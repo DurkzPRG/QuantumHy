@@ -3,7 +3,7 @@ package com.durkz.quantumhy.view;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.pressure.PressureGovernor.ViewPassContext;
-import com.durkz.quantumhy.runtime.QuantumHyJfr;
+import com.durkz.quantumhy.runtime.RuntimeMetrics;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.util.ChunkUtil;
@@ -63,7 +63,11 @@ public final class ClientViewRadiusController {
             int entTarget,
             boolean entApplied,
             int lodExcluded,
-            String reason
+            String reason,
+            int visualCandidates,
+            int visualVisible,
+            double visualPressure,
+            boolean visualEmergency
     ) {
         public boolean applied() {
             return chunkApplied || entApplied;
@@ -81,7 +85,10 @@ public final class ClientViewRadiusController {
                     : "ent " + entCurrent + (entApplied ? "->" + entTarget : "=" + entTarget)
                             + (lodExcluded > 0 ? " lod-" + lodExcluded : "");
             return name + " " + entities + "/" + chunks + "ch " + raw + "/ch~"
-                    + String.format(Locale.ROOT, "%.1f", smoothed) + " " + chunk + " " + ent + " [" + reason + "]";
+                    + String.format(Locale.ROOT, "%.1f", smoothed) + " " + chunk + " " + ent
+                    + " vis " + visualVisible + "/" + visualCandidates
+                    + String.format(Locale.ROOT, " p=%.2f", visualPressure)
+                    + (visualEmergency ? " emergency" : "") + " [" + reason + "]";
         }
     }
 
@@ -107,7 +114,8 @@ public final class ClientViewRadiusController {
         String name = nameOf(playerRef);
 
         if (!LeanCoreBridge.shouldQuantumHyWriteViewRadius(config)) {
-            return new Decision(name, -1, 0, 0, -1, -1, false, false, -1, -1, false, 0, "yield");
+            return new Decision(name, -1, 0, 0, -1, -1, false, false, -1, -1, false, 0,
+                    "yield", 0, 0, 0.0D, false);
         }
 
         Ref<EntityStore> ref = playerRef.getReference();
@@ -123,6 +131,13 @@ public final class ClientViewRadiusController {
         PlayerState state = stateFor(playerRef.getUuid());
         ChunkTracker tracker = playerRef.getChunkTracker();
         int chunkCurrent = player.getClientViewRadius();
+        EntityTrackerSystems.EntityViewer viewer = config.adaptEntityRadius
+                ? store.getComponent(ref, EntityTrackerSystems.EntityViewer.getComponentType())
+                : null;
+        int observedEntityRadius = viewer == null ? 0 : Math.max(0, viewer.viewRadiusBlocks);
+        int entityCeiling = observedEntityRadius > 0
+                ? ceiling(state, State.ENTITY, observedEntityRadius)
+                : observedEntityRadius;
 
         int centerX = 0;
         int centerZ = 0;
@@ -147,7 +162,7 @@ public final class ClientViewRadiusController {
         boolean streaming = isStreaming(tracker);
         boolean cacheHit = state != null && state.hasDensityCache && haveChunkPos
                 && state.cacheChunkX == centerX && state.cacheChunkZ == centerZ;
-        boolean firstPass = state != null && !state.hasAppliedFrac;
+        boolean firstPass = state != null && !state.hasPassedOnce;
         boolean atMin = chunkCurrent <= config.minClientViewRadius;
         boolean trackerExpandOk = state != null
                 && ViewAdaptPolicy.canExpand(state.calmPasses, config.expandHysteresisPasses,
@@ -166,20 +181,21 @@ public final class ClientViewRadiusController {
         } else {
             density = sampleDensity(playerRef, world, state);
         }
-        QuantumHyJfr.density(System.nanoTime() - densityStartNs, density.chunks(), density.entities(), densityCached);
+        RuntimeMetrics.density(System.nanoTime() - densityStartNs, density.chunks(), density.entities(), densityCached);
         boolean allowWrites = System.nanoTime() < writeDeadlineNanos;
         boolean sampleCovered = density.valid()
                 && ViewAdaptPolicy.densityCoveredColumns(density.chunks(), densityScanPlan.columns());
 
         if (!density.valid() && density != Density.DEFERRED) {
             if (haveChunkPos && state != null) {
+                state.hasPassedOnce = true;
                 state.hasChunkPos = true;
                 state.lastChunkX = centerX;
                 state.lastChunkZ = centerZ;
             }
             Decision skipped = new Decision(name, density.entities(), density.chunks(), -1,
                     chunkCurrent, chunkCurrent, false, false,
-                    -1, -1, false, 0, "no-sample");
+                    -1, -1, false, 0, "no-sample", 0, 0, 0.0D, false);
             UUID playerId = playerRef.getUuid();
             if (playerId != null) {
                 lastDecisions.put(playerId, skipped);
@@ -197,10 +213,37 @@ public final class ClientViewRadiusController {
         }
         double densityFrac = sampleCovered ? pass.shrinkFraction(smoothed) : 0.0D;
         double chunkLoadFrac = chunkLoadShrinkFraction(tracker, config);
-        double entityRawFrac = ViewAdaptPolicy.combinedShrinkFraction(
-                densityFrac, chunkLoadFrac, config.baselineShrinkFraction);
-        double rawFrac = ViewAdaptPolicy.terrainShrinkFraction(
-                densityFrac, chunkLoadFrac, config.baselineShrinkFraction);
+        VisualLoadRegistry.State visual = VisualLoadRegistry.state(playerRef.getUuid());
+        int visualCandidates = visual == null ? 0 : visual.candidates();
+        int visualVisible = visual == null ? 0 : visual.visible();
+        int sampledEntityRadius = visual == null ? observedEntityRadius : visual.entityRadiusBlocks();
+        double projectedCandidates = VisualPressurePolicy.projectedCandidates(
+                visualCandidates, sampledEntityRadius, Math.max(sampledEntityRadius, entityCeiling));
+        double entityRatio = VisualPressurePolicy.entityRatio(
+                projectedCandidates, config.maxVisibleEntitiesPerPlayer);
+        double averageChurn = visual == null ? 0.0D : visual.drainAverageChurn();
+        double churnRatio = config.maxVisibleEntitiesPerPlayer <= 0
+                ? 0.0D
+                : averageChurn * 4.0D / config.maxVisibleEntitiesPerPlayer;
+        double effectiveEntityRatio = Math.max(entityRatio, churnRatio);
+        int loadingSections = tracker == null ? 0 : tracker.getLoadingSectionsCount();
+        double backlogRatio = VisualPressurePolicy.backlogRatio(
+                loadingSections, config.streamingBacklogThreshold);
+        double visualPressure = updateVisualPressure(state, effectiveEntityRatio, backlogRatio);
+        boolean visualEmergency = state != null && state.visualEmergency;
+        double entityRawFrac = Math.max(
+                ViewAdaptPolicy.combinedShrinkFraction(
+                        densityFrac, chunkLoadFrac, config.baselineShrinkFraction),
+                VisualPressurePolicy.entityShrinkFraction(effectiveEntityRatio));
+        double rawFrac;
+        if (config.adaptiveTerrainViewEnabled) {
+            rawFrac = ViewAdaptPolicy.terrainShrinkFraction(
+                    densityFrac, chunkLoadFrac, config.baselineShrinkFraction);
+        } else if (config.emergencyTerrainTrimEnabled && visualEmergency) {
+            rawFrac = VisualPressurePolicy.emergencyTerrainFraction(visualPressure);
+        } else {
+            rawFrac = 0.0D;
+        }
 
         boolean canExpand = state != null
                 && ViewAdaptPolicy.canExpand(state.calmPasses, config.expandHysteresisPasses,
@@ -210,12 +253,16 @@ public final class ClientViewRadiusController {
                 state == null ? 0.0D : state.lastAppliedFrac,
                 state != null && state.hasAppliedFrac,
                 canExpand);
-        String reason = shrinkReason(true, frac, densityFrac, chunkLoadFrac, config.baselineShrinkFraction);
+        String reason = config.adaptiveTerrainViewEnabled
+                ? shrinkReason(true, frac, densityFrac, chunkLoadFrac, config.baselineShrinkFraction)
+                : (visualEmergency && config.emergencyTerrainTrimEnabled
+                ? "visual-emergency" : "terrain-preserved");
         if (state != null && state.hasAppliedFrac && frac > rawFrac + 1e-6 && !canExpand) {
             reason = "hold";
         }
         int radiusCeiling = chunkBase(ceiling(state, State.CHUNK, Math.max(1, player.getViewRadius())));
-        if (pass.pressured() && chunkCurrent < radiusCeiling && !canExpand) {
+        if ((config.adaptiveTerrainViewEnabled || config.emergencyTerrainTrimEnabled)
+                && pass.pressured() && chunkCurrent < radiusCeiling && !canExpand) {
             reason = "pressure";
         }
 
@@ -225,7 +272,17 @@ public final class ClientViewRadiusController {
                 chunkCurrent, chunkIdeal, config.maxExpandChunksPerPass, shrinkCap);
         boolean chunkApplied = false;
         boolean chunkHeld = false;
-        boolean chunkWantsWrite = chunkTarget != chunkCurrent;
+        boolean terrainControlActive = config.adaptiveTerrainViewEnabled
+                || (config.emergencyTerrainTrimEnabled && visualEmergency)
+                || (state != null && state.terrainWasControlled && chunkCurrent < radiusCeiling);
+        if (!terrainControlActive) {
+            chunkTarget = chunkCurrent;
+        } else if (!config.adaptiveTerrainViewEnabled && !visualEmergency) {
+            chunkTarget = ViewAdaptPolicy.rampToward(
+                    chunkCurrent, radiusCeiling, config.maxExpandChunksPerPass, shrinkCap);
+            reason = "terrain-restore";
+        }
+        boolean chunkWantsWrite = terrainControlActive && chunkTarget != chunkCurrent;
         if (chunkWantsWrite && (streaming || !allowWrites)) {
             chunkHeld = true;
         } else if (chunkWantsWrite) {
@@ -237,13 +294,10 @@ public final class ClientViewRadiusController {
         int entTarget = -1;
         boolean entApplied = false;
         int lodExcluded = 0;
-        EntityTrackerSystems.EntityViewer viewer = config.adaptEntityRadius
-                ? store.getComponent(ref, EntityTrackerSystems.EntityViewer.getComponentType())
-                : null;
         if (viewer != null && viewer.viewRadiusBlocks > 0) {
             entCurrent = viewer.viewRadiusBlocks;
             lodExcluded = viewer.lodExcludedCount;
-            int entBase = ceiling(state, State.ENTITY, entCurrent);
+            int entBase = Math.max(entCurrent, entityCeiling);
             int entMin = Math.min(config.minEntityViewBlocks, entBase);
             int entIdeal = entityRawFrac >= 1.0D ? entMin : scale(entBase, entMin, entityRawFrac);
             int entShrink = entityRawFrac >= 1.0D
@@ -269,10 +323,17 @@ public final class ClientViewRadiusController {
         }
 
         if (state != null) {
+            state.hasPassedOnce = true;
             int liveRadius = chunkApplied ? chunkTarget : chunkCurrent;
-            state.lastAppliedFrac = ViewAdaptPolicy.fracFromRadius(
-                    radiusCeiling, config.minClientViewRadius, liveRadius);
-            state.hasAppliedFrac = true;
+            if (terrainControlActive) {
+                state.lastAppliedFrac = ViewAdaptPolicy.fracFromRadius(
+                        radiusCeiling, config.minClientViewRadius, liveRadius);
+                state.hasAppliedFrac = true;
+                state.terrainWasControlled = chunkTarget < radiusCeiling;
+            } else {
+                state.lastAppliedFrac = 0.0D;
+                state.hasAppliedFrac = false;
+            }
             if (haveChunkPos) {
                 state.hasChunkPos = true;
                 state.lastChunkX = centerX;
@@ -282,7 +343,7 @@ public final class ClientViewRadiusController {
 
         Decision decision = new Decision(name, density.entities(), density.chunks(), smoothed,
                 chunkCurrent, chunkTarget, chunkApplied, chunkHeld, entCurrent, entTarget, entApplied,
-                lodExcluded, reason);
+                lodExcluded, reason, visualCandidates, visualVisible, visualPressure, visualEmergency);
         UUID playerId = playerRef.getUuid();
         if (playerId != null) {
             lastDecisions.put(playerId, decision);
@@ -304,6 +365,66 @@ public final class ClientViewRadiusController {
             return true;
         });
         lastDecisions.keySet().retainAll(online);
+        VisualLoadRegistry.retain(online);
+    }
+
+    /** Restore radii that QuantumHy changed before the runtime is stopped. */
+    public void restoreAll(@Nullable Iterable<PlayerRef> onlinePlayers) {
+        if (onlinePlayers == null) {
+            return;
+        }
+        for (PlayerRef playerRef : onlinePlayers) {
+            if (playerRef == null || !playerRef.isValid()) {
+                continue;
+            }
+            UUID playerId = playerRef.getUuid();
+            PlayerState state = playerId == null ? null : players.get(playerId);
+            Ref<EntityStore> ref = playerRef.getReference();
+            if (state == null || ref == null) {
+                continue;
+            }
+            Store<EntityStore> store = ref.getStore();
+            Player player = store.getComponent(ref, Player.getComponentType());
+            if (player != null && state.chunkCeiling > 0
+                    && player.getClientViewRadius() < state.chunkCeiling) {
+                player.setClientViewRadius(state.chunkCeiling);
+            }
+            EntityTrackerSystems.EntityViewer viewer = store.getComponent(
+                    ref, EntityTrackerSystems.EntityViewer.getComponentType());
+            if (viewer != null && state.entityCeiling > 0
+                    && viewer.viewRadiusBlocks < state.entityCeiling) {
+                viewer.viewRadiusBlocks = state.entityCeiling;
+            }
+        }
+    }
+
+    private double updateVisualPressure(PlayerState state, double entityRatio, double backlogRatio) {
+        double sample = VisualPressurePolicy.emergencyScore(entityRatio, backlogRatio);
+        if (state == null) {
+            return sample;
+        }
+        state.visualPressure = VisualPressurePolicy.ema(
+                state.visualPressure, sample, 0.25D, state.hasVisualPressure);
+        state.hasVisualPressure = true;
+        int elapsed = Math.max(1, config.tickIntervalSeconds);
+        if (!state.visualEmergency) {
+            state.visualExitSeconds = 0;
+            state.visualEnterSeconds = state.visualPressure >= 1.0D
+                    ? state.visualEnterSeconds + elapsed : 0;
+            if (state.visualEnterSeconds >= 5) {
+                state.visualEmergency = true;
+                state.visualEnterSeconds = 0;
+            }
+        } else {
+            state.visualEnterSeconds = 0;
+            boolean calm = entityRatio <= 1.0D && backlogRatio <= 1.0D;
+            state.visualExitSeconds = calm ? state.visualExitSeconds + elapsed : 0;
+            if (state.visualExitSeconds >= 15) {
+                state.visualEmergency = false;
+                state.visualExitSeconds = 0;
+            }
+        }
+        return state.visualPressure;
     }
 
     /** Counts entities in the chunks around a player as a stand-in for client render cost. */
@@ -509,6 +630,7 @@ public final class ClientViewRadiusController {
         boolean hasSmoothed;
         double lastAppliedFrac;
         boolean hasAppliedFrac;
+        boolean hasPassedOnce;
         int calmPasses;
         boolean hasDensityCache;
         int cacheChunkX;
@@ -516,6 +638,12 @@ public final class ClientViewRadiusController {
         boolean hasChunkPos;
         int lastChunkX;
         int lastChunkZ;
+        double visualPressure;
+        boolean hasVisualPressure;
+        boolean visualEmergency;
+        boolean terrainWasControlled;
+        int visualEnterSeconds;
+        int visualExitSeconds;
         Density cachedDensity = Density.NONE;
     }
 

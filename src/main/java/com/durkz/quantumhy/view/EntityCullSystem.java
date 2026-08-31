@@ -2,7 +2,7 @@ package com.durkz.quantumhy.view;
 
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.pressure.PressureGovernor;
-import com.durkz.quantumhy.runtime.QuantumHyJfr;
+import com.durkz.quantumhy.runtime.RuntimeMetrics;
 import com.hypixel.hytale.component.ArchetypeChunk;
 import com.hypixel.hytale.component.CommandBuffer;
 import com.hypixel.hytale.component.ComponentType;
@@ -23,6 +23,7 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -59,8 +60,11 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         this.playerRefComponentType = PlayerRef.getComponentType();
         this.transformComponentType = TransformComponent.getComponentType();
         this.query = Query.and(entityViewerComponentType, TransformComponent.getComponentType());
-        this.dependencies = Collections.singleton(
-                new SystemDependency<>(Order.AFTER, EntityTrackerSystems.CollectVisible.class));
+        Set<Dependency<EntityStore>> orderedAfterEngine = new HashSet<>(3);
+        orderedAfterEngine.add(new SystemDependency<>(Order.AFTER, EntityTrackerSystems.CollectVisible.class));
+        orderedAfterEngine.add(new SystemDependency<>(Order.AFTER, EntityTrackerSystems.LODCull.class));
+        orderedAfterEngine.add(new SystemDependency<>(Order.AFTER, EntityTrackerSystems.HideFromPlayer.class));
+        this.dependencies = Collections.unmodifiableSet(orderedAfterEngine);
     }
 
     @Nullable
@@ -133,7 +137,12 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         if (cap > 0 && viewer.visible.size() > cap) {
             capCulled = capToNearest(viewer, position, cap, commandBuffer, worldName);
         }
-        QuantumHyJfr.cull(System.nanoTime() - startNs, visibleBefore, verticalCulled, capCulled);
+        final PlayerRef playerRef = archetypeChunk.getComponent(index, playerRefComponentType);
+        if (playerRef != null && playerRef.getUuid() != null) {
+            int candidates = visibleBefore + Math.max(0, viewer.lodExcludedCount);
+            VisualLoadRegistry.record(playerRef.getUuid(), candidates, viewer.visible.size(), viewer.viewRadiusBlocks);
+        }
+        RuntimeMetrics.cull(System.nanoTime() - startNs, visibleBefore, verticalCulled, capCulled);
     }
 
     private static void recordVerticalCull(@Nonnull String worldName, int count) {
@@ -165,14 +174,22 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
     /** Keeps the {@code cap} nearest non-player entities, dropping the farthest ones over the cap. */
     private int capToNearest(@Nonnull EntityTrackerSystems.EntityViewer viewer, @Nonnull org.joml.Vector3d position,
                               int cap, @Nonnull CommandBuffer<EntityStore> commandBuffer, @Nonnull String worldName) {
-        int over = viewer.visible.size() - cap;
+        int eligible = 0;
+        for (final Ref<EntityStore> ref : viewer.visible) {
+            if (ref.isValid() && !commandBuffer.getArchetype(ref).contains(playerRefComponentType)
+                    && commandBuffer.getComponent(ref, transformComponentType) != null) {
+                eligible++;
+            }
+        }
+        int over = eligible - cap;
         if (over <= 0) {
             return 0;
         }
 
-        // Max-heap of the cap nearest. Scratch is thread-local because this system may tick in parallel.
+        // Track whichever side is smaller: the nearest cap or the farthest overflow.
         NearestScratch nearest = nearestScratch.get();
-        nearest.reset(cap);
+        boolean keepNearest = cap <= over;
+        nearest.reset(Math.min(cap, over), keepNearest);
         for (final Ref<EntityStore> ref : viewer.visible) {
             if (!ref.isValid() || commandBuffer.getArchetype(ref).contains(playerRefComponentType)) {
                 continue;
@@ -188,7 +205,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
             return 0;
         }
 
-        nearest.buildKeepSet();
+        nearest.buildSelectedSet();
 
         int culled = 0;
         for (final var iterator = viewer.visible.iterator(); iterator.hasNext(); ) {
@@ -196,7 +213,8 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
             if (!ref.isValid() || commandBuffer.getArchetype(ref).contains(playerRefComponentType)) {
                 continue;
             }
-            if (!nearest.keeps(ref)) {
+            boolean selected = nearest.selected(ref);
+            if ((keepNearest && !selected) || (!keepNearest && selected)) {
                 iterator.remove();
                 culled++;
             }
@@ -213,8 +231,9 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         private final IdentityHashMap<Object, Boolean> keep = new IdentityHashMap<>();
         private int size;
         private int capacity;
+        private boolean maxHeap;
 
-        void reset(int requestedCapacity) {
+        void reset(int requestedCapacity, boolean keepNearest) {
             if (refs.length < requestedCapacity) {
                 int newCapacity = Math.max(requestedCapacity, refs.length * 2 + 8);
                 refs = new Object[newCapacity];
@@ -222,6 +241,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
             }
             size = 0;
             capacity = requestedCapacity;
+            maxHeap = keepNearest;
             keep.clear();
         }
 
@@ -231,7 +251,8 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
                 refs[index] = ref;
                 distances[index] = distanceSq;
                 siftUp(index);
-            } else if (distanceSq < distances[0]) {
+            } else if ((maxHeap && distanceSq < distances[0])
+                    || (!maxHeap && distanceSq > distances[0])) {
                 refs[0] = ref;
                 distances[0] = distanceSq;
                 siftDown(0);
@@ -242,13 +263,13 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
             return size == 0;
         }
 
-        void buildKeepSet() {
+        void buildSelectedSet() {
             for (int i = 0; i < size; i++) {
                 keep.put(refs[i], Boolean.TRUE);
             }
         }
 
-        boolean keeps(Ref<EntityStore> ref) {
+        boolean selected(Ref<EntityStore> ref) {
             return keep.containsKey(ref);
         }
 
@@ -263,7 +284,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         private void siftUp(int index) {
             while (index > 0) {
                 int parent = (index - 1) >>> 1;
-                if (distances[parent] >= distances[index]) {
+                if (ordered(distances[parent], distances[index])) {
                     return;
                 }
                 swap(parent, index);
@@ -276,15 +297,23 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
             while (index < half) {
                 int child = (index << 1) + 1;
                 int right = child + 1;
-                if (right < size && distances[right] > distances[child]) {
+                if (right < size && preferred(distances[right], distances[child])) {
                     child = right;
                 }
-                if (distances[index] >= distances[child]) {
+                if (ordered(distances[index], distances[child])) {
                     return;
                 }
                 swap(index, child);
                 index = child;
             }
+        }
+
+        private boolean ordered(double parent, double child) {
+            return maxHeap ? parent >= child : parent <= child;
+        }
+
+        private boolean preferred(double candidate, double current) {
+            return maxHeap ? candidate > current : candidate < current;
         }
 
         private void swap(int a, int b) {

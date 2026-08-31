@@ -77,8 +77,10 @@ class QuantumHyConfigMigrationTest {
         assertEquals(2, config.expandHysteresisPasses);
         assertEquals(8, config.worldPassBudgetMs);
         assertTrue(config.pressureExitRequiresLastTick);
-        assertEquals(6, config.configVersion);
-        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 6"));
+        assertFalse(config.adaptiveTerrainViewEnabled);
+        assertFalse(config.emergencyTerrainTrimEnabled);
+        assertEquals(7, config.configVersion);
+        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 7"));
     }
 
     @Test
@@ -93,7 +95,7 @@ class QuantumHyConfigMigrationTest {
         assertEquals(1550, config.chunkLoadHighChunks);
         assertEquals(80, config.streamingBacklogThreshold);
         assertEquals(8, config.maxChunksPerTick);
-        assertEquals(6, config.configVersion);
+        assertEquals(7, config.configVersion);
     }
 
     @Test
@@ -105,7 +107,7 @@ class QuantumHyConfigMigrationTest {
         assertEquals(700, config.chunkLoadLowChunks);
         assertEquals(1550, config.chunkLoadHighChunks);
         assertEquals(8, config.maxChunksPerTick);
-        assertEquals(6, config.configVersion);
+        assertEquals(7, config.configVersion);
     }
 
     @Test
@@ -125,7 +127,7 @@ class QuantumHyConfigMigrationTest {
         assertEquals(1, config.maxExpandChunksPerPass);
         assertEquals(2, config.expandHysteresisPasses);
         assertTrue(config.pressureExitRequiresLastTick);
-        assertEquals(6, config.configVersion);
+        assertEquals(7, config.configVersion);
     }
 
     @Test
@@ -133,10 +135,29 @@ class QuantumHyConfigMigrationTest {
         QuantumHyConfig config = QuantumHyConfig.load(dir);
 
         assertFalse(config.verboseLog);
-        assertEquals(6, config.configVersion);
+        assertEquals(7, config.configVersion);
         assertEquals(8, config.worldPassBudgetMs);
         assertEquals(1.0D, config.entityLodAggressiveness, 1e-9);
         assertFalse(config.holdSpawnOnLoadingChunks);
         assertFalse(config.pressureTrimClientEffects);
+        assertFalse(config.adaptiveTerrainViewEnabled);
+        assertFalse(config.emergencyTerrainTrimEnabled);
+    }
+
+    @Test
+    void v6MigrationDisablesTerrainReduction(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("QuantumHy.json"), """
+                {
+                  "adaptiveTerrainViewEnabled": true,
+                  "emergencyTerrainTrimEnabled": true,
+                  "configVersion": 6
+                }
+                """, StandardCharsets.UTF_8);
+
+        QuantumHyConfig config = QuantumHyConfig.load(dir);
+
+        assertFalse(config.adaptiveTerrainViewEnabled);
+        assertFalse(config.emergencyTerrainTrimEnabled);
+        assertEquals(7, config.configVersion);
     }
 }

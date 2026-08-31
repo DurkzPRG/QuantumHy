@@ -25,6 +25,14 @@ public record RuntimeSnapshot(
             int maxChunksPerSecond,
             int maxChunksPerTick,
             @Nonnull String streamTier,
+            int terrainCurrent,
+            int terrainTarget,
+            int entityCurrent,
+            int entityTarget,
+            int visualCandidates,
+            int visualVisible,
+            double visualPressure,
+            boolean visualEmergency,
             @Nonnull String decisionLine
     ) {
     }

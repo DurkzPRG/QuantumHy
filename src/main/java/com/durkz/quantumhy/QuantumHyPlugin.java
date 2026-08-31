@@ -44,7 +44,8 @@ public class QuantumHyPlugin extends JavaPlugin {
 
         runtime = new FpsRuntime(this, config);
 
-        if (config.maxEntityVerticalDistance > 0 || config.maxVisibleEntitiesPerPlayer > 0) {
+        if (config.adaptEntityRadius || config.emergencyTerrainTrimEnabled
+                || config.maxEntityVerticalDistance > 0 || config.maxVisibleEntitiesPerPlayer > 0) {
             getEntityStoreRegistry().registerSystem(
                     new EntityCullSystem(EntityTrackerSystems.EntityViewer.getComponentType(), config));
         }
@@ -68,7 +69,7 @@ public class QuantumHyPlugin extends JavaPlugin {
         String configDump = String.format(java.util.Locale.ROOT,
                 "QuantumHy %s setup. config: verboseLog=%s tickInterval=%ds initialDelay=%ds hardCap=%d min=%d "
                         + "max=%d scan=%d densityLow=%.1f/ch densityHigh=%.1f/ch ringWeight=%s baseline=%.0f%% "
-                        + "chunkLoadShrink=%s smoothing=%.2f adaptEntity=%s "
+                        + "terrainAdaptive=%s terrainEmergency=%s chunkLoadShrink=%s smoothing=%.2f adaptEntity=%s "
                         + "minEntityBlocks=%d entityLod=%.2fx vCull=%s entityCap=%s spawnHold=%s minDelta=%d streamGrace=%s "
                         + "backlog>=%d smoothStreaming=%s catchUp=%s catchUpRate=%d/%d hold=%dms maxChunks/s=%d maxChunks/tick=%d leanCoreTakeover=%s yield=%s "
                         + "pressureGov=%s msptEnter=%.0f exitLast=%s effects=%s worldLevers=%s "
@@ -80,6 +81,7 @@ public class QuantumHyPlugin extends JavaPlugin {
                 config.densityRingWeighting ? String.format(java.util.Locale.ROOT, "edge=%.2f",
                         config.densityRingEdgeWeight) : "off",
                 config.baselineShrinkFraction * 100.0D,
+                config.adaptiveTerrainViewEnabled, config.emergencyTerrainTrimEnabled,
                 config.chunkLoadShrinkEnabled ? config.chunkLoadLowChunks + "-" + config.chunkLoadHighChunks : "off",
                 config.densitySmoothing, config.adaptEntityRadius,
                 config.minEntityViewBlocks, config.entityLodAggressiveness,

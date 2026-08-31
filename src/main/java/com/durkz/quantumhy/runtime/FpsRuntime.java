@@ -8,6 +8,7 @@ import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.ClientViewRadiusController;
 import com.durkz.quantumhy.view.EntityCullSystem;
 import com.durkz.quantumhy.view.StreamRateController;
+import com.durkz.quantumhy.view.VisualLoadRegistry;
 import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
@@ -94,8 +95,9 @@ public final class FpsRuntime {
             streamFuture = scheduler.scheduleAtFixedRate(this::streamTick, delay * 1000L, streamMs, TimeUnit.MILLISECONDS);
         }
         plugin.getLogger().atInfo().log(
-                "QuantumHy runtime started (interval=%ds, hardCap=%d, min=%d, max=%d, scan=%d, entityRadius=%s).",
-                interval, config.targetClientViewRadius, config.minClientViewRadius,
+                "QuantumHy runtime started (interval=%ds, terrainAdaptive=%s, terrainEmergency=%s, hardCap=%d, min=%d, max=%d, scan=%d, entityRadius=%s).",
+                interval, config.adaptiveTerrainViewEnabled, config.emergencyTerrainTrimEnabled,
+                config.targetClientViewRadius, config.minClientViewRadius,
                 config.maxClientViewRadius, config.densityScanChunkRadius, config.adaptEntityRadius);
         ensureLeanCoreCoexistence();
     }
@@ -272,16 +274,13 @@ public final class FpsRuntime {
         PressureGovernor.Snapshot pressureSnap = pressure.snapshotFor(worldUuid);
         int cruiseS = pressure.maxChunksPerSecond(config, pressureSnap);
         int cruiseT = pressure.maxChunksPerTick(config, pressureSnap);
-        String worldName = world.getName();
         for (PlayerRef ref : batch) {
             try {
                 stream.applyOne(ref, pressureSnap.pressured(), cruiseS, cruiseT, nowMs);
-                publishStreamRow(ref, worldName);
             } catch (RuntimeException ex) {
                 plugin.getLogger().atWarning().withCause(ex).log("stream rate apply failed for a player");
             }
         }
-        publishSnapshot();
     }
 
     private void runWorldPass(World world, UUID worldUuid, List<PlayerRef> batch) {
@@ -291,7 +290,7 @@ public final class FpsRuntime {
         String worldName = world.getName();
         long pressureStartNs = System.nanoTime();
         PressureGovernor.Snapshot pressureSnap = pressure.update(world, config, config.tickIntervalSeconds);
-        QuantumHyJfr.pressure(System.nanoTime() - pressureStartNs, pressureSnap.msptAvg10s(),
+        RuntimeMetrics.pressure(System.nanoTime() - pressureStartNs, pressureSnap.msptAvg10s(),
                 pressureSnap.msptLast(), pressureSnap.pressured());
         pressure.applyEntityLod(config, pressureSnap);
         PressureGovernor.ViewPassContext pass = pressure.viewContext(config, pressureSnap);
@@ -337,7 +336,7 @@ public final class FpsRuntime {
         } else if (changed > 0) {
             plugin.getLogger().atInfo().log("pass [world=%s] changed %d view radius", shortId(worldUuid), changed);
         }
-        QuantumHyJfr.pass(System.nanoTime() - startNs, batch.size(), changed, pressureSnap.pressured());
+        RuntimeMetrics.pass(System.nanoTime() - startNs, batch.size(), changed, pressureSnap.pressured());
     }
 
     /** Server log summary for spawn hold, entity cull, and pressure since the last pass on this world. */
@@ -383,24 +382,10 @@ public final class FpsRuntime {
         int tickRate = tracker == null ? 0 : tracker.getMaxSectionsPerTick();
         StreamRateController.Applied applied = stream.lastApplied(playerId);
         playerSnapshotScratch.put(playerId, new RuntimeSnapshot.PlayerRow(
-                decision.name(), worldName, loaded, loading, rate, tickRate, applied.tier(), decision.line()));
-    }
-
-    private void publishStreamRow(@Nonnull PlayerRef ref, @Nonnull String worldName) {
-        UUID playerId = ref.getUuid();
-        if (playerId == null) {
-            return;
-        }
-        RuntimeSnapshot.PlayerRow previous = playerSnapshotScratch.get(playerId);
-        StreamRateController.Applied applied = stream.lastApplied(playerId);
-        ChunkTracker tracker = ref.getChunkTracker();
-        int loaded = tracker == null ? 0 : tracker.getLoadedSectionsCount();
-        int loading = tracker == null ? 0 : tracker.getLoadingSectionsCount();
-        String name = previous == null ? String.valueOf(playerId) : previous.name();
-        String decision = previous == null ? "" : previous.decisionLine();
-        playerSnapshotScratch.put(playerId, new RuntimeSnapshot.PlayerRow(
-                name, worldName, loaded, loading, applied.perSecond(), applied.perTick(),
-                applied.tier(), decision));
+                decision.name(), worldName, loaded, loading, rate, tickRate, applied.tier(),
+                decision.chunkCurrent(), decision.chunkTarget(), decision.entCurrent(), decision.entTarget(),
+                decision.visualCandidates(), decision.visualVisible(), decision.visualPressure(),
+                decision.visualEmergency(), decision.line()));
     }
 
     private void publishSnapshot() {
@@ -488,6 +473,7 @@ public final class FpsRuntime {
     public void shutdown() {
         running = false;
         Collection<PlayerRef> online = Universe.get().getPlayers();
+        controller.restoreAll(online);
         stream.restoreAll(online);
         pressure.shutdown(config);
         EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO = originalEntityLodRatio;
@@ -508,6 +494,7 @@ public final class FpsRuntime {
         worldSnapshotScratch.clear();
         streamWorldBatches.clear();
         streamTouchedScratch.clear();
+        VisualLoadRegistry.clear();
         snapshot = RuntimeSnapshot.EMPTY;
     }
 }

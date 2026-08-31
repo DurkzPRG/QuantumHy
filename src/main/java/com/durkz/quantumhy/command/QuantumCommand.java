@@ -71,7 +71,9 @@ public class QuantumCommand extends AbstractCommandCollection {
         double lodRatio = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO;
         double lodX = lodRatio / EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO_DEFAULT;
         send(ctx, String.format(Locale.ROOT,
-                "levers: chunkMin=%d hardCap=%s entityRadius=%s entityMin=%db lodCull=%.2fx",
+                "levers: terrain=%s emergency=%s chunkMin=%d hardCap=%s entityRadius=%s entityMin=%db lodCull=%.2fx",
+                config.adaptiveTerrainViewEnabled ? "adaptive" : "preserved",
+                config.emergencyTerrainTrimEnabled ? "armed" : "off",
                 config.minClientViewRadius,
                 config.targetClientViewRadius > 0 ? String.valueOf(config.targetClientViewRadius) : "off",
                 config.adaptEntityRadius, config.minEntityViewBlocks, lodX), "#AAAAAA");
@@ -126,6 +128,11 @@ public class QuantumCommand extends AbstractCommandCollection {
                         row.name(), row.chunksLoaded(), row.chunksLoading(),
                         row.maxChunksPerSecond(), row.maxChunksPerTick(), row.streamTier(),
                         row.decisionLine()), "#CCCCCC");
+                send(ctx, String.format(Locale.ROOT,
+                        "  terrain=%d->%d entity=%d->%d visual=%d/%d pressure=%.2f emergency=%s",
+                        row.terrainCurrent(), row.terrainTarget(), row.entityCurrent(), row.entityTarget(),
+                        row.visualVisible(), row.visualCandidates(), row.visualPressure(),
+                        row.visualEmergency() ? "on" : "off"), "#999999");
             }
             return;
         }

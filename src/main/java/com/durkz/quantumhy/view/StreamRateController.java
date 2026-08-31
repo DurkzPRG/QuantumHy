@@ -2,6 +2,7 @@ package com.durkz.quantumhy.view;
 
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
+import com.durkz.quantumhy.pressure.PressureGovernor;
 import com.durkz.quantumhy.runtime.RuntimeMetrics;
 import com.hypixel.hytale.math.util.ChunkUtil;
 import com.hypixel.hytale.math.vector.Transform;
@@ -25,9 +26,21 @@ public final class StreamRateController {
             int perSecond,
             int perTick,
             int loading,
-            int loaded
+            int loaded,
+            int loadingDelta,
+            double msptAverage,
+            double msptLast,
+            @Nonnull String protectionCause
     ) {
-        public static final Applied IDLE = new Applied("off", 0, 0, 0, 0);
+        public static final Applied IDLE = new Applied("off", 0, 0, 0, 0,
+                0, 0.0D, 0.0D, "none");
+    }
+
+    public record Transition(
+            @Nonnull StreamCatchUpPolicy.Tier previous,
+            @Nonnull StreamCatchUpPolicy.Tier current,
+            @Nonnull Applied applied
+    ) {
     }
 
     private final QuantumHyConfig config;
@@ -46,7 +59,8 @@ public final class StreamRateController {
         return state == null
                 ? Applied.IDLE
                 : new Applied(state.appliedTier, state.appliedPerSecond, state.appliedPerTick,
-                state.lastLoading, state.lastLoaded);
+                state.lastLoading, state.lastLoaded, state.lastLoadingDelta,
+                state.lastMsptAverage, state.lastMsptLast, state.protectionCause);
     }
 
     public void retain(@Nonnull Set<UUID> online) {
@@ -55,12 +69,13 @@ public final class StreamRateController {
 
     /**
      * Apply cruise or catch-up caps for one player. Must run on that player's world thread.
-     * {@code cruisePerSecond}/{@code cruisePerTick} already include MSPT pressure multipliers.
+     * Returns a transition only when entering or leaving the protection tier.
      */
-    public void applyOne(@Nullable PlayerRef playerRef, boolean pressured, int cruisePerSecond,
-            int cruisePerTick, long nowMs) {
+    @Nullable
+    public Transition applyOne(@Nullable PlayerRef playerRef,
+            @Nonnull PressureGovernor.StreamHealth health, boolean governorPressured, long nowMs) {
         if (playerRef == null || !playerRef.isValid()) {
-            return;
+            return null;
         }
         UUID playerId = playerRef.getUuid();
         ChunkTracker tracker = playerRef.getChunkTracker();
@@ -68,10 +83,10 @@ public final class StreamRateController {
 
         if (!LeanCoreBridge.shouldQuantumHyWriteChunkRate(config)) {
             restore(tracker, state);
-            return;
+            return null;
         }
         if (tracker == null || state == null) {
-            return;
+            return null;
         }
 
         if (!state.hasBaseline) {
@@ -94,23 +109,30 @@ public final class StreamRateController {
                 state.hasChunkPos, state.lastChunkX, state.lastChunkZ, chunkX, chunkZ);
         int loading = tracker.getLoadingSectionsCount();
         int loaded = tracker.getLoadedSectionsCount();
+        int loadingDelta = state.hasLoading ? loading - state.lastLoading : 0;
+        StreamCatchUpPolicy.Tier previousTier = state.tier;
 
         StreamCatchUpPolicy.Outcome outcome = StreamCatchUpPolicy.next(
                 config.streamCatchUpEnabled,
-                pressured,
+                config.pressureGovernorEnabled,
+                governorPressured,
+                health.available(),
+                health.msptAvg10s(),
+                health.msptLast(),
+                config.pressureMsptEnter,
+                config.pressureMsptExit,
+                config.pressureChunkRateMultiplier,
                 chebyshev,
                 loading,
-                state.hasLoading,
-                state.lastLoading,
-                state.consecutiveGrowing,
                 state.moveScore,
+                state.protectCalmSamples,
                 state.tier,
                 nowMs,
                 state.holdUntilMs,
                 config.streamingBacklogThreshold,
                 config.streamCatchUpHoldMs,
-                cruisePerSecond,
-                cruisePerTick,
+                config.maxChunksPerSecond,
+                config.maxChunksPerTick,
                 config.streamCatchUpPerSecond,
                 config.streamCatchUpPerTick,
                 state.baselinePerSecond,
@@ -134,15 +156,20 @@ public final class StreamRateController {
                     outcome.perTick(),
                     loading,
                     loaded,
+                    loadingDelta,
+                    health.msptAvg10s(),
+                    health.msptLast(),
+                    outcome.protectionCause().label(),
                     holdLeft,
                     changed);
         }
 
         state.tier = outcome.tier();
         state.holdUntilMs = outcome.holdUntilMs();
-        state.consecutiveGrowing = outcome.consecutiveGrowing();
         state.moveScore = outcome.moveScore();
+        state.protectCalmSamples = outcome.protectCalmSamples();
         state.lastLoading = loading;
+        state.lastLoadingDelta = loadingDelta;
         state.hasLoading = true;
         if (haveChunk) {
             state.hasChunkPos = true;
@@ -153,6 +180,16 @@ public final class StreamRateController {
         state.appliedPerSecond = outcome.perSecond();
         state.appliedPerTick = outcome.perTick();
         state.lastLoaded = loaded;
+        state.lastMsptAverage = health.msptAvg10s();
+        state.lastMsptLast = health.msptLast();
+        state.protectionCause = outcome.protectionCause().label();
+
+        boolean protectChanged = (previousTier == StreamCatchUpPolicy.Tier.PROTECT)
+                != (outcome.tier() == StreamCatchUpPolicy.Tier.PROTECT);
+        if (!protectChanged) {
+            return null;
+        }
+        return new Transition(previousTier, outcome.tier(), lastApplied(playerId));
     }
 
     public void restoreAll(@Nullable Iterable<PlayerRef> onlinePlayers) {
@@ -181,18 +218,21 @@ public final class StreamRateController {
         state.hasBaseline = false;
         state.tier = StreamCatchUpPolicy.Tier.CRUISE;
         state.holdUntilMs = 0L;
+        state.protectCalmSamples = 0;
         state.appliedTier = "off";
         state.appliedPerSecond = state.baselinePerSecond;
         state.appliedPerTick = state.baselinePerTick;
+        state.protectionCause = "none";
     }
 
     private static final class PlayerStreamState {
         StreamCatchUpPolicy.Tier tier = StreamCatchUpPolicy.Tier.CRUISE;
         long holdUntilMs;
-        int consecutiveGrowing;
         int moveScore;
+        int protectCalmSamples;
         boolean hasLoading;
         int lastLoading;
+        int lastLoadingDelta;
         boolean hasChunkPos;
         int lastChunkX;
         int lastChunkZ;
@@ -203,5 +243,8 @@ public final class StreamRateController {
         int appliedPerSecond;
         int appliedPerTick;
         int lastLoaded;
+        double lastMsptAverage;
+        double lastMsptLast;
+        String protectionCause = "none";
     }
 }

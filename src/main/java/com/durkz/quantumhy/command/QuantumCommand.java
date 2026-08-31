@@ -124,9 +124,11 @@ public class QuantumCommand extends AbstractCommandCollection {
         if (!snap.playersOrEmpty().isEmpty()) {
             for (RuntimeSnapshot.PlayerRow row : snap.players()) {
                 send(ctx, String.format(Locale.ROOT,
-                        "- %s chunks loaded=%d loading=%d rate=%d/s tick=%d tier=%s | %s",
+                        "- %s chunks loaded=%d loading=%d delta=%+d rate=%d/s tick=%d tier=%s "
+                                + "streamMspt=%.1f/%.1f protect=%s | %s",
                         row.name(), row.chunksLoaded(), row.chunksLoading(),
-                        row.maxChunksPerSecond(), row.maxChunksPerTick(), row.streamTier(),
+                        row.loadingDelta(), row.maxChunksPerSecond(), row.maxChunksPerTick(), row.streamTier(),
+                        row.streamMsptLast(), row.streamMsptAverage(), row.streamProtectionCause(),
                         row.decisionLine()), "#CCCCCC");
                 send(ctx, String.format(Locale.ROOT,
                         "  terrain=%d->%d entity=%d->%d visual=%d/%d pressure=%.2f emergency=%s",

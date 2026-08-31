@@ -50,6 +50,13 @@ public final class PressureGovernor {
         }
     }
 
+    /** Fresh metric read used by the 250ms chunk streaming loop. */
+    public record StreamHealth(boolean available, double msptAvg10s, double msptLast) {
+        public static StreamHealth unavailable() {
+            return new StreamHealth(false, 0.0D, 0.0D);
+        }
+    }
+
     private static final double NANOS_TO_MS = 1.0D / 1_000_000.0D;
 
     /** Per-world vertical cull distance chosen on the last pass (read by {@link com.durkz.quantumhy.view.EntityCullSystem}). */
@@ -115,6 +122,18 @@ public final class PressureGovernor {
                 writeChunkRate ? maxChunksPerSecond(config, snap) : 0,
                 writeChunkRate ? maxChunksPerTick(config, snap) : 0,
                 snap.pressured());
+    }
+
+    /** Must run on the world's thread. Reads the metric once for the whole stream batch. */
+    @Nonnull
+    public StreamHealth readStreamHealth(@Nonnull World world) {
+        HistoricMetric metric = world.getBufferedTickLengthMetricSet();
+        if (metric == null) {
+            return StreamHealth.unavailable();
+        }
+        return new StreamHealth(true,
+                metric.getAverage(0) * NANOS_TO_MS,
+                metric.getLastValue() * NANOS_TO_MS);
     }
 
     /** Must run on the world's thread. */

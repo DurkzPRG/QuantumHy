@@ -1,6 +1,5 @@
 package com.durkz.quantumhy.runtime;
 
-/** Optional profiling sink supplied only by dedicated developer builds. */
 public interface RuntimeProfiler {
 
     void pass(long durationNanos, int players, int changed, boolean pressured);
@@ -12,5 +11,6 @@ public interface RuntimeProfiler {
     void pressure(long durationNanos, double averageMspt, double lastMspt, boolean pressured);
 
     void streaming(String tier, int perSecond, int perTick, int loading, int loaded,
+            int loadingDelta, double averageMspt, double lastMspt, String protectionCause,
             long holdMs, boolean changed);
 }

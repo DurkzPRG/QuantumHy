@@ -7,6 +7,7 @@ import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.ClientViewRadiusController;
 import com.durkz.quantumhy.view.EntityCullSystem;
+import com.durkz.quantumhy.view.StreamCatchUpPolicy;
 import com.durkz.quantumhy.view.StreamRateController;
 import com.durkz.quantumhy.view.VisualLoadRegistry;
 import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
@@ -272,11 +273,21 @@ public final class FpsRuntime {
             return;
         }
         PressureGovernor.Snapshot pressureSnap = pressure.snapshotFor(worldUuid);
-        int cruiseS = pressure.maxChunksPerSecond(config, pressureSnap);
-        int cruiseT = pressure.maxChunksPerTick(config, pressureSnap);
+        PressureGovernor.StreamHealth health = pressure.readStreamHealth(world);
         for (PlayerRef ref : batch) {
             try {
-                stream.applyOne(ref, pressureSnap.pressured(), cruiseS, cruiseT, nowMs);
+                StreamRateController.Transition transition = stream.applyOne(
+                        ref, health, pressureSnap.pressured(), nowMs);
+                if (transition != null) {
+                    StreamRateController.Applied applied = transition.applied();
+                    plugin.getLogger().atInfo().log(
+                            "stream protect %s [world=%s player=%s] mspt=%.1f/%.1f "
+                                    + "loading=%d delta=%+d rate=%d/%d cause=%s",
+                            transition.current() == StreamCatchUpPolicy.Tier.PROTECT ? "entered" : "exited",
+                            world.getName(), ref.getUsername(), applied.msptLast(), applied.msptAverage(),
+                            applied.loading(), applied.loadingDelta(), applied.perSecond(), applied.perTick(),
+                            applied.protectionCause());
+                }
             } catch (RuntimeException ex) {
                 plugin.getLogger().atWarning().withCause(ex).log("stream rate apply failed for a player");
             }
@@ -383,6 +394,7 @@ public final class FpsRuntime {
         StreamRateController.Applied applied = stream.lastApplied(playerId);
         playerSnapshotScratch.put(playerId, new RuntimeSnapshot.PlayerRow(
                 decision.name(), worldName, loaded, loading, rate, tickRate, applied.tier(),
+                applied.loadingDelta(), applied.msptAverage(), applied.msptLast(), applied.protectionCause(),
                 decision.chunkCurrent(), decision.chunkTarget(), decision.entCurrent(), decision.entTarget(),
                 decision.visualCandidates(), decision.visualVisible(), decision.visualPressure(),
                 decision.visualEmergency(), decision.line()));

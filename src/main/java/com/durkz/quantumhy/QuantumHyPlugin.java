@@ -129,14 +129,11 @@ public class QuantumHyPlugin extends JavaPlugin {
         super.shutdown();
     }
 
-    /** Stops the local-only dev performance meter so it logs its session average, if it is in this build. */
     private void stopDevPerfMeterIfPresent() {
         try {
             Class.forName("com.durkz.quantumhy.devperf.PerfMeter").getMethod("stop").invoke(null);
         } catch (ClassNotFoundException notInBuild) {
-            // Expected in published builds: the dev meter is gitignored and not shipped.
         } catch (ReflectiveOperationException ignored) {
-            // Dev tool only; never block shutdown on it.
         }
     }
 }

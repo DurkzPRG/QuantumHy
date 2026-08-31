@@ -6,16 +6,24 @@ import com.hypixel.hytale.server.core.plugin.PluginManager;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.Locale;
 
-/**
- * Optional, reflective hook into LeanCore. LeanCore isn't a compile dependency, so every call
- * no-ops when it isn't loaded or its internals moved.
- */
+/** Optional reflective coexistence contract with LeanCore. */
 public final class LeanCoreBridge {
+
+    public enum Ownership {
+        NOT_PRESENT, TAKEOVER_CONFIRMED, YIELD_CONFIGURED, INCOMPATIBLE, EXTERNAL
+    }
 
     private static final String GROUP = "durkz";
     private static final String NAME = "LeanCore";
+    private static final String[] VIEW_FLAGS = {
+            "viewRadiusGovernanceEnabled", "liteViewRadiusEnabled", "motionViewRadiusBoostEnabled"
+    };
+
+    private static volatile Ownership ownership = Ownership.NOT_PRESENT;
+    private static volatile SavedViewFlags savedViewFlags;
 
     private LeanCoreBridge() {
     }
@@ -24,86 +32,104 @@ public final class LeanCoreBridge {
         return getPlugin() != null;
     }
 
-    /** Clears LeanCore's three view-radius flags. True if config was reached and all three fields were written. */
-    public static boolean disableViewRadiusGovernance() {
+    /** Attempts takeover once LeanCore has initialized. Failure is safe: QuantumHy yields shared levers. */
+    public static Ownership establishOwnership(QuantumHyConfig config) {
         Object plugin = getPlugin();
         if (plugin == null) {
-            return false;
+            ownership = Ownership.NOT_PRESENT;
+            return ownership;
         }
-        Object config = leanCoreConfig(plugin);
-        if (config == null) {
-            return false;
+        if (config == null || config.yieldToLeanCoreViewRadius) {
+            ownership = Ownership.YIELD_CONFIGURED;
+            return ownership;
         }
-        boolean a = clearFlag(config, "viewRadiusGovernanceEnabled");
-        boolean b = clearFlag(config, "liteViewRadiusEnabled");
-        boolean c = clearFlag(config, "motionViewRadiusBoostEnabled");
-        return a && b && c;
+        if (!config.leanCoreTakeover) {
+            ownership = Ownership.EXTERNAL;
+            return ownership;
+        }
+        Object leanConfig = leanCoreConfig(plugin);
+        if (leanConfig == null) {
+            ownership = Ownership.INCOMPATIBLE;
+            return ownership;
+        }
+        SavedViewFlags saved = readViewFlags(leanConfig);
+        if (saved == null || !writeViewFlags(leanConfig, false)) {
+            ownership = Ownership.INCOMPATIBLE;
+            return ownership;
+        }
+        savedViewFlags = saved;
+        ownership = Ownership.TAKEOVER_CONFIRMED;
+        return ownership;
     }
 
-    /**
-     * True when LeanCore is loaded and {@code chunkThroughputGovernanceEnabled} is on. In that case
-     * QuantumHy must not write {@code ChunkTracker} send-rate caps (LeanCore owns them).
-     */
+    public static Ownership ownership() {
+        return ownership;
+    }
+
+    public static boolean shouldQuantumHyWriteViewRadius(QuantumHyConfig config) {
+        if (config == null || config.yieldToLeanCoreViewRadius) {
+            return false;
+        }
+        return ownership != Ownership.INCOMPATIBLE && ownership != Ownership.YIELD_CONFIGURED;
+    }
+
     public static boolean leanCoreOwnsChunkRate() {
         Object config = leanCoreConfig(getPlugin());
         return config != null && readFlag(config, "chunkThroughputGovernanceEnabled");
     }
 
-    /**
-     * Whether QuantumHy may write {@code ChunkTracker} section send-rate caps this pass
-     * ({@code setMaxSectionsPerSecond} / {@code setMaxSectionsPerTick}). Yields to LeanCore when its
-     * throughput governance is on. Writes only when {@link QuantumHyConfig#smoothChunkStreaming} is
-     * enabled (MSPT pressure may still trim caps).
-     */
     public static boolean shouldQuantumHyWriteChunkRate(QuantumHyConfig config) {
-        if (config == null || config.yieldToLeanCoreViewRadius || leanCoreOwnsChunkRate()) {
+        if (config == null || !config.smoothChunkStreaming || !shouldQuantumHyWriteViewRadius(config)) {
             return false;
         }
-        return config.smoothChunkStreaming;
+        return !leanCoreOwnsChunkRate();
     }
 
-    /** Short label for {@code /q status}. */
     public static String chunkRateOwnerLabel(QuantumHyConfig config) {
+        if (ownership == Ownership.INCOMPATIBLE || ownership == Ownership.YIELD_CONFIGURED) {
+            return "LeanCore (safe yield)";
+        }
         if (leanCoreOwnsChunkRate()) {
             return "LeanCore";
         }
         if (!shouldQuantumHyWriteChunkRate(config)) {
             return "off";
         }
-        if (config.pressureGovernorEnabled && config.pressureChunkRateMultiplier < 1.0D) {
-            return "QuantumHy (smooth + MSPT pressure)";
-        }
-        return "QuantumHy (smooth streaming)";
+        return config.pressureGovernorEnabled && config.pressureChunkRateMultiplier < 1.0D
+                ? "QuantumHy (smooth + MSPT pressure)" : "QuantumHy (smooth streaming)";
     }
 
-    /** View-radius owner for {@code /q status}. */
     public static String viewRadiusOwnerLabel(QuantumHyConfig config) {
-        if (config.yieldToLeanCoreViewRadius) {
-            return "LeanCore";
-        }
-        if (isPresent() && config.leanCoreTakeover) {
-            return "QuantumHy (LeanCore view governance off)";
-        }
-        if (isPresent()) {
-            return "conflict risk (both may write)";
-        }
-        return "QuantumHy";
+        return switch (ownership) {
+            case NOT_PRESENT -> "QuantumHy";
+            case TAKEOVER_CONFIRMED -> "QuantumHy (LeanCore view governance off)";
+            case YIELD_CONFIGURED -> "LeanCore";
+            case INCOMPATIBLE -> "LeanCore (safe yield: bridge incompatible)";
+            case EXTERNAL -> "external config (view may conflict)";
+        };
     }
 
-    /** One-line coexistence summary for logs. */
     public static String coexistenceLine(QuantumHyConfig config) {
         return String.format(Locale.ROOT,
-                "LeanCore coexistence: view=%s chunkRate=%s hotRadius=LeanCore",
-                viewRadiusOwnerLabel(config), chunkRateOwnerLabel(config));
+                "LeanCore coexistence: state=%s view=%s chunkRate=%s hotRadius=LeanCore",
+                ownership, viewRadiusOwnerLabel(config), chunkRateOwnerLabel(config));
+    }
+
+    /** Restores LeanCore's in-memory flags only when this runtime had a confirmed takeover. */
+    public static void restoreOwnership() {
+        SavedViewFlags saved = savedViewFlags;
+        Object config = leanCoreConfig(getPlugin());
+        if (ownership == Ownership.TAKEOVER_CONFIRMED && saved != null && config != null) {
+            writeViewFlags(config, saved.values());
+        }
+        savedViewFlags = null;
+        ownership = isPresent() ? Ownership.EXTERNAL : Ownership.NOT_PRESENT;
     }
 
     private static Object getPlugin() {
         try {
             PluginManager pm = PluginManager.get();
-            if (pm == null) {
-                return null;
-            }
-            return pm.getPlugin(new PluginIdentifier(GROUP, NAME));
+            return pm == null ? null : pm.getPlugin(new PluginIdentifier(GROUP, NAME));
         } catch (RuntimeException | LinkageError ignored) {
             return null;
         }
@@ -131,13 +157,35 @@ public final class LeanCoreBridge {
         }
     }
 
-    private static boolean clearFlag(Object target, String field) {
+    private static SavedViewFlags readViewFlags(Object target) {
+        boolean[] values = new boolean[VIEW_FLAGS.length];
         try {
-            Field f = target.getClass().getField(field);
-            f.setBoolean(target, false);
+            for (int i = 0; i < VIEW_FLAGS.length; i++) {
+                values[i] = target.getClass().getField(VIEW_FLAGS[i]).getBoolean(target);
+            }
+            return new SavedViewFlags(values);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private static boolean writeViewFlags(Object target, boolean value) {
+        boolean[] values = new boolean[VIEW_FLAGS.length];
+        Arrays.fill(values, value);
+        return writeViewFlags(target, values);
+    }
+
+    private static boolean writeViewFlags(Object target, boolean[] values) {
+        try {
+            for (int i = 0; i < VIEW_FLAGS.length; i++) {
+                target.getClass().getField(VIEW_FLAGS[i]).setBoolean(target, values[i]);
+            }
             return true;
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             return false;
         }
+    }
+
+    private record SavedViewFlags(boolean[] values) {
     }
 }

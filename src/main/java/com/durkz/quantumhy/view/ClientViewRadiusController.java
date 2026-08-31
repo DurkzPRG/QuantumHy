@@ -3,6 +3,7 @@ package com.durkz.quantumhy.view;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.pressure.PressureGovernor.ViewPassContext;
+import com.durkz.quantumhy.runtime.QuantumHyJfr;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.util.ChunkUtil;
@@ -105,7 +106,9 @@ public final class ClientViewRadiusController {
         }
         String name = nameOf(playerRef);
 
-        if (config.yieldToLeanCoreViewRadius) {
+        if (!LeanCoreBridge.shouldQuantumHyWriteViewRadius(config)) {
+            UUID playerId = playerRef.getUuid();
+            restoreChunkStreaming(playerRef.getChunkTracker(), playerId == null ? null : players.get(playerId));
             return new Decision(name, -1, 0, 0, -1, -1, false, false, -1, -1, false, 0, "yield");
         }
 
@@ -154,14 +157,18 @@ public final class ClientViewRadiusController {
         boolean skipScan = ViewAdaptPolicy.shouldSkipDensityScan(
                 firstPass, movingFast, streaming, cacheHit, atMin, trackerExpandOk);
 
+        long densityStartNs = System.nanoTime();
+        boolean densityCached = false;
         Density density;
         if (skipScan && state != null && state.hasDensityCache) {
             density = state.cachedDensity;
+            densityCached = true;
         } else if (skipScan) {
             density = Density.DEFERRED;
         } else {
             density = sampleDensity(playerRef, world, state);
         }
+        QuantumHyJfr.density(System.nanoTime() - densityStartNs, density.chunks(), density.entities(), densityCached);
         boolean allowWrites = System.nanoTime() < writeDeadlineNanos;
         boolean sampleCovered = density.valid()
                 && ViewAdaptPolicy.densityCoveredColumns(density.chunks(), densityScanPlan.columns());
@@ -172,7 +179,7 @@ public final class ClientViewRadiusController {
                 state.lastChunkX = centerX;
                 state.lastChunkZ = centerZ;
             }
-            applyChunkStreamingSmoothing(tracker, pass);
+            applyChunkStreamingSmoothing(tracker, pass, state);
             Decision skipped = new Decision(name, density.entities(), density.chunks(), -1,
                     chunkCurrent, chunkCurrent, false, false,
                     -1, -1, false, 0, "no-sample");
@@ -193,7 +200,9 @@ public final class ClientViewRadiusController {
         }
         double densityFrac = sampleCovered ? pass.shrinkFraction(smoothed) : 0.0D;
         double chunkLoadFrac = chunkLoadShrinkFraction(tracker, config);
-        double rawFrac = ViewAdaptPolicy.combinedShrinkFraction(
+        double entityRawFrac = ViewAdaptPolicy.combinedShrinkFraction(
+                densityFrac, chunkLoadFrac, config.baselineShrinkFraction);
+        double rawFrac = ViewAdaptPolicy.terrainShrinkFraction(
                 densityFrac, chunkLoadFrac, config.baselineShrinkFraction);
 
         boolean canExpand = state != null
@@ -239,8 +248,8 @@ public final class ClientViewRadiusController {
             lodExcluded = viewer.lodExcludedCount;
             int entBase = ceiling(state, State.ENTITY, entCurrent);
             int entMin = Math.min(config.minEntityViewBlocks, entBase);
-            int entIdeal = frac >= 1.0D ? entMin : scale(entBase, entMin, frac);
-            int entShrink = frac >= 1.0D
+            int entIdeal = entityRawFrac >= 1.0D ? entMin : scale(entBase, entMin, entityRawFrac);
+            int entShrink = entityRawFrac >= 1.0D
                     ? Math.max(entCurrent - entMin, 1)
                     : ViewAdaptPolicy.entityShrinkCap(
                     config.maxExpandEntityBlocksPerPass,
@@ -274,7 +283,7 @@ public final class ClientViewRadiusController {
             }
         }
 
-        applyChunkStreamingSmoothing(tracker, pass);
+        applyChunkStreamingSmoothing(tracker, pass, state);
 
         Decision decision = new Decision(name, density.entities(), density.chunks(), smoothed,
                 chunkCurrent, chunkTarget, chunkApplied, chunkHeld, entCurrent, entTarget, entApplied,
@@ -296,22 +305,68 @@ public final class ClientViewRadiusController {
      * instead of as one burst the client has to mesh at once. Idempotent: only writes on change.
      * {@code 0} for either cap means leave the connection default alone.
      */
-    private void applyChunkStreamingSmoothing(@Nullable ChunkTracker tracker, ViewPassContext pass) {
-        if (!LeanCoreBridge.shouldQuantumHyWriteChunkRate(config) || tracker == null) {
+    private void applyChunkStreamingSmoothing(@Nullable ChunkTracker tracker, ViewPassContext pass,
+            @Nullable PlayerState state) {
+        if (tracker == null) {
             return;
         }
+        if (!LeanCoreBridge.shouldQuantumHyWriteChunkRate(config)) {
+            restoreChunkStreaming(tracker, state);
+            return;
+        }
+        if (state != null && !state.hasChunkRateBaseline) {
+            state.chunkRateBaselinePerSecond = tracker.getMaxSectionsPerSecond();
+            state.chunkRateBaselinePerTick = tracker.getMaxSectionsPerTick();
+            state.hasChunkRateBaseline = true;
+        }
+        boolean changed = false;
         if (pass.maxChunksPerSecond() > 0 && tracker.getMaxSectionsPerSecond() != pass.maxChunksPerSecond()) {
             tracker.setMaxSectionsPerSecond(pass.maxChunksPerSecond());
+            changed = true;
         }
         if (pass.maxChunksPerTick() > 0 && tracker.getMaxSectionsPerTick() != pass.maxChunksPerTick()) {
             tracker.setMaxSectionsPerTick(pass.maxChunksPerTick());
+            changed = true;
         }
+        QuantumHyJfr.streaming(pass.maxChunksPerSecond(), pass.maxChunksPerTick(), changed);
     }
 
     /** Drop cached state for players no longer online, so the map can't grow without bound. */
     public void retain(Set<UUID> online) {
-        players.keySet().retainAll(online);
+        players.entrySet().removeIf(entry -> {
+            if (online.contains(entry.getKey())) {
+                return false;
+            }
+            return true;
+        });
         lastDecisions.keySet().retainAll(online);
+    }
+
+    /** Restores per-player chunk send caps that QuantumHy changed during this runtime. */
+    public void restoreChunkStreaming(Iterable<PlayerRef> onlinePlayers) {
+        if (onlinePlayers == null) {
+            return;
+        }
+        for (PlayerRef ref : onlinePlayers) {
+            if (ref == null) {
+                continue;
+            }
+            PlayerState state = ref.getUuid() == null ? null : players.get(ref.getUuid());
+            restoreChunkStreaming(ref.getChunkTracker(), state);
+        }
+    }
+
+    private static void restoreChunkStreaming(@Nullable ChunkTracker tracker, @Nullable PlayerState state) {
+        if (tracker == null || state == null || !state.hasChunkRateBaseline) {
+            return;
+        }
+        if (tracker.getMaxSectionsPerSecond() != state.chunkRateBaselinePerSecond) {
+            tracker.setMaxSectionsPerSecond(state.chunkRateBaselinePerSecond);
+        }
+        if (tracker.getMaxSectionsPerTick() != state.chunkRateBaselinePerTick) {
+            tracker.setMaxSectionsPerTick(state.chunkRateBaselinePerTick);
+        }
+        state.hasChunkRateBaseline = false;
     }
 
     /** Counts entities in the chunks around a player as a stand-in for client render cost. */
@@ -525,6 +580,9 @@ public final class ClientViewRadiusController {
         int lastChunkX;
         int lastChunkZ;
         Density cachedDensity = Density.NONE;
+        int chunkRateBaselinePerSecond;
+        int chunkRateBaselinePerTick;
+        boolean hasChunkRateBaseline;
     }
 
     private record Density(int rawEntities, double weightedEntities, int chunks) {

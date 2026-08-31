@@ -29,7 +29,7 @@ public class QuantumHyConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /** Bumped when shipped defaults change; older QuantumHy.json files migrate on load. */
-    private static final int CURRENT_CONFIG_VERSION = 5;
+    private static final int CURRENT_CONFIG_VERSION = 6;
 
     private transient File configFile;
 
@@ -123,7 +123,7 @@ public class QuantumHyConfig {
      * entities sooner (e.g. {@code 1.5} drops them at ~80% of the default distance). Server-wide, not
      * per player, applied once at startup and restored on shutdown.
      */
-    public double entityLodAggressiveness = 2.0D;
+    public double entityLodAggressiveness = 1.0D;
 
     /**
      * Stop streaming entities that are too far above or below the player, in blocks. The engine sends
@@ -147,7 +147,7 @@ public class QuantumHyConfig {
      * {@link #streamingBacklogThreshold}. Uses the engine spawn pool cooldown. A {@code > 0}
      * gate is too sensitive on 0.6 (local stream up to 2560 sections/s).
      */
-    public boolean holdSpawnOnLoadingChunks = true;
+    public boolean holdSpawnOnLoadingChunks = false;
 
     /** Minimum change (chunks) before an update is sent, to avoid churn. Ramped +1 expands still apply. */
     public int minViewRadiusDelta = 2;
@@ -255,7 +255,7 @@ public class QuantumHyConfig {
      * Under pressure, trim bloom and sunshaft client effects and push packets to online players.
      * Restored on release and shutdown.
      */
-    public boolean pressureTrimClientEffects = true;
+    public boolean pressureTrimClientEffects = false;
 
     /** Multiplier applied to bloom/sunshaft intensities while {@link #pressureTrimClientEffects} is active. */
     public double pressureEffectScale = 0.5D;

@@ -9,8 +9,6 @@ import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.EntityCullSystem;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
-import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
-import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
 import com.hypixel.hytale.server.core.command.system.basecommands.AbstractCommandCollection;
 import com.hypixel.hytale.server.core.command.system.basecommands.CommandBase;
 import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
@@ -66,40 +64,6 @@ public class QuantumCommand extends AbstractCommandCollection {
         }
     }
 
-    private static final class PerfSubCommand extends CommandBase {
-
-        private final RequiredArg<String> actionArg;
-
-        PerfSubCommand() {
-            super("perf", "Toggle local dev performance meter");
-            requireNoPermission();
-            this.actionArg = withRequiredArg("action", "on | off", ArgTypes.STRING);
-        }
-
-        @Override
-        protected void executeSync(CommandContext ctx) {
-            perf(ctx, ctx.get(actionArg));
-        }
-    }
-
-    private static void perf(CommandContext ctx, String arg) {
-        boolean on = "on".equalsIgnoreCase(arg);
-        boolean off = "off".equalsIgnoreCase(arg);
-        if (!on && !off) {
-            send(ctx, "Usage: /q perf on | off", "#FFAA00");
-            return;
-        }
-        try {
-            Class<?> meter = Class.forName("com.durkz.quantumhy.devperf.PerfMeter");
-            meter.getMethod(on ? "start" : "stop").invoke(null);
-            send(ctx, "perf meter " + (on ? "on" : "off") + " (check the server log)", "#55FF55");
-        } catch (ClassNotFoundException notInBuild) {
-            send(ctx, "perf meter is a local-only dev tool and is not included in this build", "#FFAA00");
-        } catch (ReflectiveOperationException failed) {
-            send(ctx, "perf meter failed: " + failed.getClass().getSimpleName(), "#FF5555");
-        }
-    }
-
     private static void status(CommandContext ctx, QuantumHyConfig config, QuantumHyPlugin plugin) {
         send(ctx, "QuantumHy status", "#55FFFF");
         send(ctx, config.enabled ? "enabled" : "DISABLED via config", config.enabled ? "#55FF55" : "#FF5555");
@@ -147,15 +111,8 @@ public class QuantumCommand extends AbstractCommandCollection {
                 config.maxChunksPerTick > 0 ? String.valueOf(config.maxChunksPerTick) : "connection-default",
                 LeanCoreBridge.chunkRateOwnerLabel(config)), "#AAAAAA");
 
-        String lean = String.format(Locale.ROOT, "view=%s | %s",
-                LeanCoreBridge.viewRadiusOwnerLabel(config),
-                LeanCoreBridge.isPresent()
-                        ? (config.leanCoreTakeover && !config.yieldToLeanCoreViewRadius
-                        ? "LeanCore present (sim/memory/hot radius)"
-                        : config.yieldToLeanCoreViewRadius
-                        ? "yielding view to LeanCore"
-                        : "present, takeover off (view may conflict)")
-                        : "not present (standalone)");
+        String lean = String.format(Locale.ROOT, "state=%s view=%s",
+                LeanCoreBridge.ownership(), LeanCoreBridge.viewRadiusOwnerLabel(config));
         send(ctx, "LeanCore: " + lean, "#AAAAAA");
 
         int count = snap.onlineCount() > 0 ? snap.onlineCount() : countOnline();
@@ -215,7 +172,6 @@ public class QuantumCommand extends AbstractCommandCollection {
     private static void help(CommandContext ctx) {
         send(ctx, "QuantumHy commands", "#55FFFF");
         send(ctx, "/q status - what QuantumHy is doing right now", "#AAAAAA");
-        send(ctx, "/q perf on|off - local dev server performance log (if present in this build)", "#AAAAAA");
         send(ctx, "/q help - this list", "#AAAAAA");
     }
 

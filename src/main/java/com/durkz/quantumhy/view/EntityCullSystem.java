@@ -2,6 +2,7 @@ package com.durkz.quantumhy.view;
 
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.pressure.PressureGovernor;
+import com.durkz.quantumhy.runtime.QuantumHyJfr;
 import com.hypixel.hytale.component.ArchetypeChunk;
 import com.hypixel.hytale.component.CommandBuffer;
 import com.hypixel.hytale.component.ComponentType;
@@ -87,8 +88,10 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
     @Override
     public void tick(float dt, int index, @Nonnull ArchetypeChunk<EntityStore> archetypeChunk,
                      @Nonnull Store<EntityStore> store, @Nonnull CommandBuffer<EntityStore> commandBuffer) {
+        final long startNs = System.nanoTime();
         final var viewer = archetypeChunk.getComponent(index, entityViewerComponentType);
         assert viewer != null;
+        final int visibleBefore = viewer.visible.size();
 
         final World world = store.getExternalData().getWorld();
         final String worldName = world == null ? "?" : world.getName();
@@ -99,9 +102,9 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         final double py = position.y;
 
         final int maxVertical = PressureGovernor.verticalDistance(worldName, config.maxEntityVerticalDistance);
-        if (maxVertical > 0) {
+        int verticalCulled = 0;
+        if (maxVertical > 0 && !viewer.visible.isEmpty()) {
             final int maxVerticalSq = maxVertical * maxVertical;
-            int culled = 0;
             for (final var iterator = viewer.visible.iterator(); iterator.hasNext(); ) {
                 final Ref<EntityStore> targetRef = iterator.next();
                 if (!targetRef.isValid()) {
@@ -119,16 +122,18 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
                 final double dy = targetTransform.getPosition().y - py;
                 if (dy * dy > maxVerticalSq) {
                     iterator.remove();
-                    culled++;
+                    verticalCulled++;
                 }
             }
-            recordVerticalCull(worldName, culled);
+            recordVerticalCull(worldName, verticalCulled);
         }
 
         final int cap = config.maxVisibleEntitiesPerPlayer;
+        int capCulled = 0;
         if (cap > 0 && viewer.visible.size() > cap) {
-            capToNearest(viewer, position, cap, commandBuffer, worldName);
+            capCulled = capToNearest(viewer, position, cap, commandBuffer, worldName);
         }
+        QuantumHyJfr.cull(System.nanoTime() - startNs, visibleBefore, verticalCulled, capCulled);
     }
 
     private static void recordVerticalCull(@Nonnull String worldName, int count) {
@@ -158,11 +163,11 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
     }
 
     /** Keeps the {@code cap} nearest non-player entities, dropping the farthest ones over the cap. */
-    private void capToNearest(@Nonnull EntityTrackerSystems.EntityViewer viewer, @Nonnull org.joml.Vector3d position,
+    private int capToNearest(@Nonnull EntityTrackerSystems.EntityViewer viewer, @Nonnull org.joml.Vector3d position,
                               int cap, @Nonnull CommandBuffer<EntityStore> commandBuffer, @Nonnull String worldName) {
         int over = viewer.visible.size() - cap;
         if (over <= 0) {
-            return;
+            return 0;
         }
 
         // Max-heap of the cap nearest. Scratch is thread-local because this system may tick in parallel.
@@ -180,7 +185,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
             nearest.offer(ref, distSq);
         }
         if (nearest.isEmpty()) {
-            return;
+            return 0;
         }
 
         nearest.buildKeepSet();
@@ -198,6 +203,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         }
         recordCapCull(worldName, culled);
         nearest.clear();
+        return culled;
     }
 
     /** Allocation-free max heap and identity keep set, reused once per worker thread. */

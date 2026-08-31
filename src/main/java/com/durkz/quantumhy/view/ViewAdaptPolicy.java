@@ -21,6 +21,16 @@ public final class ViewAdaptPolicy {
     }
 
     /**
+     * Terrain is the last render lever to tighten. Entity streaming can react to the complete
+     * density signal, while terrain only follows its upper range. Chunk-load pressure still
+     * applies immediately because it represents active client meshing work.
+     */
+    public static double terrainShrinkFraction(double densityFrac, double chunkLoadFrac, double baseline) {
+        double terrainDensity = densityFrac <= 0.60D ? 0.0D : (densityFrac - 0.60D) / 0.40D;
+        return combinedShrinkFraction(terrainDensity, chunkLoadFrac, baseline);
+    }
+
+    /**
      * Chunk-load (and any other falling signal) may only <em>increase</em> shrink. A drop in
      * {@code rawFrac} is ignored until {@code canExpand} (load has been calm for the hysteresis
      * window). Shrink-up is always allowed.

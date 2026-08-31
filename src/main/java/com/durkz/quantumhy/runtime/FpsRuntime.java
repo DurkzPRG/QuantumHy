@@ -39,6 +39,7 @@ public final class FpsRuntime {
     private final QuantumHyConfig config;
     private final ClientViewRadiusController controller;
     private final PressureGovernor pressure;
+    private final double originalEntityLodRatio;
 
     private ScheduledExecutorService scheduler;
     private ScheduledFuture<?> tickFuture;
@@ -62,6 +63,7 @@ public final class FpsRuntime {
         this.config = config;
         this.controller = new ClientViewRadiusController(config);
         this.pressure = new PressureGovernor(plugin);
+        this.originalEntityLodRatio = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO;
     }
 
     public void start() {
@@ -101,22 +103,15 @@ public final class FpsRuntime {
         if (leanCoreHandled) {
             return;
         }
-        if (config.yieldToLeanCoreViewRadius || !config.leanCoreTakeover) {
-            if (LeanCoreBridge.isPresent()) {
-                if (!config.yieldToLeanCoreViewRadius) {
-                    plugin.getLogger().atWarning().log(
-                            "LeanCore detected but leanCoreTakeover=false: both mods may fight over the client view radius.");
-                }
-                logLeanCoreChunkRateCoexistence();
-            }
-            leanCoreHandled = true;
-            return;
-        }
         if (LeanCoreBridge.isPresent()) {
-            boolean off = LeanCoreBridge.disableViewRadiusGovernance();
-            plugin.getLogger().atInfo().log(
-                    "LeanCore detected: took over the client view radius (governance %s). LeanCore keeps simulation and memory.",
-                    off ? "turned off" : "could not be reached, check LeanCore version");
+            LeanCoreBridge.Ownership state = LeanCoreBridge.establishOwnership(config);
+            if (state == LeanCoreBridge.Ownership.TAKEOVER_CONFIRMED) {
+                plugin.getLogger().atInfo().log(
+                        "LeanCore detected: QuantumHy takeover confirmed. LeanCore keeps simulation and memory.");
+            } else if (state == LeanCoreBridge.Ownership.INCOMPATIBLE) {
+                plugin.getLogger().atWarning().log(
+                        "LeanCore bridge could not confirm ownership: QuantumHy safely yields view radius and chunk streaming.");
+            }
             logLeanCoreChunkRateCoexistence();
             leanCoreHandled = true;
             return;
@@ -203,7 +198,10 @@ public final class FpsRuntime {
             return;
         }
         String worldName = world.getName();
+        long pressureStartNs = System.nanoTime();
         PressureGovernor.Snapshot pressureSnap = pressure.update(world, config, config.tickIntervalSeconds);
+        QuantumHyJfr.pressure(System.nanoTime() - pressureStartNs, pressureSnap.msptAvg10s(),
+                pressureSnap.msptLast(), pressureSnap.pressured());
         pressure.applyEntityLod(config, pressureSnap);
         PressureGovernor.ViewPassContext pass = pressure.viewContext(config, pressureSnap);
 
@@ -248,6 +246,7 @@ public final class FpsRuntime {
         } else if (changed > 0) {
             plugin.getLogger().atInfo().log("pass [world=%s] changed %d view radius", shortId(worldUuid), changed);
         }
+        QuantumHyJfr.pass(System.nanoTime() - startNs, batch.size(), changed, pressureSnap.pressured());
     }
 
     /** Server log summary for spawn hold, entity cull, and pressure since the last pass on this world. */
@@ -326,8 +325,11 @@ public final class FpsRuntime {
 
     public void shutdown() {
         running = false;
+        Collection<PlayerRef> online = Universe.get().getPlayers();
+        controller.restoreChunkStreaming(online);
         pressure.shutdown(config);
-        EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO_DEFAULT;
+        EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO = originalEntityLodRatio;
+        LeanCoreBridge.restoreOwnership();
         if (tickFuture != null) {
             tickFuture.cancel(false);
             tickFuture = null;

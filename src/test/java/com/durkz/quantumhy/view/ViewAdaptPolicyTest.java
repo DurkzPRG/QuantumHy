@@ -21,6 +21,14 @@ class ViewAdaptPolicyTest {
     }
 
     @Test
+    void terrainWaitsForHighDensityWhileEntityLoadCanReactEarlier() {
+        assertEquals(0.50D, ViewAdaptPolicy.combinedShrinkFraction(0.50D, 0.0D, 0.0D), 1e-9);
+        assertEquals(0.0D, ViewAdaptPolicy.terrainShrinkFraction(0.50D, 0.0D, 0.0D), 1e-9);
+        assertEquals(1.0D, ViewAdaptPolicy.terrainShrinkFraction(1.0D, 0.0D, 0.0D), 1e-9);
+        assertEquals(0.75D, ViewAdaptPolicy.terrainShrinkFraction(0.0D, 0.75D, 0.0D), 1e-9);
+    }
+
+    @Test
     void ratchetAllowsExpandAfterHysteresis() {
         int calm = 0;
         calm = ViewAdaptPolicy.nextCalmPasses(calm, true);

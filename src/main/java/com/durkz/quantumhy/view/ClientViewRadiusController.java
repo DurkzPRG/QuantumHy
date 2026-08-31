@@ -107,8 +107,6 @@ public final class ClientViewRadiusController {
         String name = nameOf(playerRef);
 
         if (!LeanCoreBridge.shouldQuantumHyWriteViewRadius(config)) {
-            UUID playerId = playerRef.getUuid();
-            restoreChunkStreaming(playerRef.getChunkTracker(), playerId == null ? null : players.get(playerId));
             return new Decision(name, -1, 0, 0, -1, -1, false, false, -1, -1, false, 0, "yield");
         }
 
@@ -179,7 +177,6 @@ public final class ClientViewRadiusController {
                 state.lastChunkX = centerX;
                 state.lastChunkZ = centerZ;
             }
-            applyChunkStreamingSmoothing(tracker, pass, state);
             Decision skipped = new Decision(name, density.entities(), density.chunks(), -1,
                     chunkCurrent, chunkCurrent, false, false,
                     -1, -1, false, 0, "no-sample");
@@ -283,8 +280,6 @@ public final class ClientViewRadiusController {
             }
         }
 
-        applyChunkStreamingSmoothing(tracker, pass, state);
-
         Decision decision = new Decision(name, density.entities(), density.chunks(), smoothed,
                 chunkCurrent, chunkTarget, chunkApplied, chunkHeld, entCurrent, entTarget, entApplied,
                 lodExcluded, reason);
@@ -300,37 +295,6 @@ public final class ClientViewRadiusController {
         return playerId == null ? null : lastDecisions.get(playerId);
     }
 
-    /**
-     * Caps how fast sections stream to this client, so a freshly opened radius arrives spread out
-     * instead of as one burst the client has to mesh at once. Idempotent: only writes on change.
-     * {@code 0} for either cap means leave the connection default alone.
-     */
-    private void applyChunkStreamingSmoothing(@Nullable ChunkTracker tracker, ViewPassContext pass,
-            @Nullable PlayerState state) {
-        if (tracker == null) {
-            return;
-        }
-        if (!LeanCoreBridge.shouldQuantumHyWriteChunkRate(config)) {
-            restoreChunkStreaming(tracker, state);
-            return;
-        }
-        if (state != null && !state.hasChunkRateBaseline) {
-            state.chunkRateBaselinePerSecond = tracker.getMaxSectionsPerSecond();
-            state.chunkRateBaselinePerTick = tracker.getMaxSectionsPerTick();
-            state.hasChunkRateBaseline = true;
-        }
-        boolean changed = false;
-        if (pass.maxChunksPerSecond() > 0 && tracker.getMaxSectionsPerSecond() != pass.maxChunksPerSecond()) {
-            tracker.setMaxSectionsPerSecond(pass.maxChunksPerSecond());
-            changed = true;
-        }
-        if (pass.maxChunksPerTick() > 0 && tracker.getMaxSectionsPerTick() != pass.maxChunksPerTick()) {
-            tracker.setMaxSectionsPerTick(pass.maxChunksPerTick());
-            changed = true;
-        }
-        QuantumHyJfr.streaming(pass.maxChunksPerSecond(), pass.maxChunksPerTick(), changed);
-    }
-
     /** Drop cached state for players no longer online, so the map can't grow without bound. */
     public void retain(Set<UUID> online) {
         players.entrySet().removeIf(entry -> {
@@ -340,33 +304,6 @@ public final class ClientViewRadiusController {
             return true;
         });
         lastDecisions.keySet().retainAll(online);
-    }
-
-    /** Restores per-player chunk send caps that QuantumHy changed during this runtime. */
-    public void restoreChunkStreaming(Iterable<PlayerRef> onlinePlayers) {
-        if (onlinePlayers == null) {
-            return;
-        }
-        for (PlayerRef ref : onlinePlayers) {
-            if (ref == null) {
-                continue;
-            }
-            PlayerState state = ref.getUuid() == null ? null : players.get(ref.getUuid());
-            restoreChunkStreaming(ref.getChunkTracker(), state);
-        }
-    }
-
-    private static void restoreChunkStreaming(@Nullable ChunkTracker tracker, @Nullable PlayerState state) {
-        if (tracker == null || state == null || !state.hasChunkRateBaseline) {
-            return;
-        }
-        if (tracker.getMaxSectionsPerSecond() != state.chunkRateBaselinePerSecond) {
-            tracker.setMaxSectionsPerSecond(state.chunkRateBaselinePerSecond);
-        }
-        if (tracker.getMaxSectionsPerTick() != state.chunkRateBaselinePerTick) {
-            tracker.setMaxSectionsPerTick(state.chunkRateBaselinePerTick);
-        }
-        state.hasChunkRateBaseline = false;
     }
 
     /** Counts entities in the chunks around a player as a stand-in for client render cost. */
@@ -580,9 +517,6 @@ public final class ClientViewRadiusController {
         int lastChunkX;
         int lastChunkZ;
         Density cachedDensity = Density.NONE;
-        int chunkRateBaselinePerSecond;
-        int chunkRateBaselinePerTick;
-        boolean hasChunkRateBaseline;
     }
 
     private record Density(int rawEntities, double weightedEntities, int chunks) {

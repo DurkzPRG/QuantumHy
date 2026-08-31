@@ -105,10 +105,12 @@ public class QuantumCommand extends AbstractCommandCollection {
                 worldRow.poolCooled(),
                 SpawnStreamPauseSystem.POOL_COOLDOWNS.sum()), "#AAAAAA");
         send(ctx, String.format(Locale.ROOT,
-                "streaming: smooth=%s maxSections/s=%s maxSections/tick=%s chunkRateOwner=%s",
+                "streaming: smooth=%s catchUp=%s cruise=%s/%s burst=%d/%d owner=%s",
                 config.smoothChunkStreaming,
+                config.streamCatchUpEnabled ? "on" : "off",
                 config.maxChunksPerSecond > 0 ? String.valueOf(config.maxChunksPerSecond) : "connection-default",
                 config.maxChunksPerTick > 0 ? String.valueOf(config.maxChunksPerTick) : "connection-default",
+                config.streamCatchUpPerSecond, config.streamCatchUpPerTick,
                 LeanCoreBridge.chunkRateOwnerLabel(config)), "#AAAAAA");
 
         String lean = String.format(Locale.ROOT, "state=%s view=%s",
@@ -120,9 +122,10 @@ public class QuantumCommand extends AbstractCommandCollection {
         if (!snap.playersOrEmpty().isEmpty()) {
             for (RuntimeSnapshot.PlayerRow row : snap.players()) {
                 send(ctx, String.format(Locale.ROOT,
-                        "- %s chunks loaded=%d loading=%d rate=%d/s | %s",
+                        "- %s chunks loaded=%d loading=%d rate=%d/s tick=%d tier=%s | %s",
                         row.name(), row.chunksLoaded(), row.chunksLoading(),
-                        row.maxChunksPerSecond(), row.decisionLine()), "#CCCCCC");
+                        row.maxChunksPerSecond(), row.maxChunksPerTick(), row.streamTier(),
+                        row.decisionLine()), "#CCCCCC");
             }
             return;
         }
@@ -137,9 +140,9 @@ public class QuantumCommand extends AbstractCommandCollection {
             ChunkTracker tracker = ref.getChunkTracker();
             String line = "- " + nameOf(ref);
             if (tracker != null) {
-                line += String.format(Locale.ROOT, " chunks loaded=%d loading=%d rate=%d/s",
+                line += String.format(Locale.ROOT, " chunks loaded=%d loading=%d rate=%d/s tick=%d",
                         tracker.getLoadedSectionsCount(), tracker.getLoadingSectionsCount(),
-                        tracker.getMaxSectionsPerSecond());
+                        tracker.getMaxSectionsPerSecond(), tracker.getMaxSectionsPerTick());
             }
             send(ctx, line + " (awaiting first pass)", "#CCCCCC");
         }

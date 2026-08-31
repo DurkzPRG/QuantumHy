@@ -7,6 +7,7 @@ import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.ClientViewRadiusController;
 import com.durkz.quantumhy.view.EntityCullSystem;
+import com.durkz.quantumhy.view.StreamRateController;
 import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
@@ -38,11 +39,13 @@ public final class FpsRuntime {
     private final QuantumHyPlugin plugin;
     private final QuantumHyConfig config;
     private final ClientViewRadiusController controller;
+    private final StreamRateController stream;
     private final PressureGovernor pressure;
     private final double originalEntityLodRatio;
 
     private ScheduledExecutorService scheduler;
     private ScheduledFuture<?> tickFuture;
+    private ScheduledFuture<?> streamFuture;
     private volatile boolean running;
 
     private boolean leanCoreHandled;
@@ -53,6 +56,11 @@ public final class FpsRuntime {
     private final Set<UUID> onlineScratch = new HashSet<>();
     private final ArrayList<List<PlayerRef>> listPool = new ArrayList<>();
 
+    /** Reused by the 250ms path. One queued batch per world prevents world-thread backlog. */
+    private final ConcurrentHashMap<UUID, StreamWorldBatch> streamWorldBatches = new ConcurrentHashMap<>();
+    private final ArrayList<StreamWorldBatch> streamTouchedScratch = new ArrayList<>(4);
+    private long streamGeneration;
+
     private final ConcurrentHashMap<UUID, RuntimeSnapshot.PlayerRow> playerSnapshotScratch = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, RuntimeSnapshot.WorldRow> worldSnapshotScratch = new ConcurrentHashMap<>();
     private volatile RuntimeSnapshot snapshot = RuntimeSnapshot.EMPTY;
@@ -62,6 +70,7 @@ public final class FpsRuntime {
         this.plugin = plugin;
         this.config = config;
         this.controller = new ClientViewRadiusController(config);
+        this.stream = new StreamRateController(config);
         this.pressure = new PressureGovernor(plugin);
         this.originalEntityLodRatio = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO;
     }
@@ -80,6 +89,10 @@ public final class FpsRuntime {
         long interval = Math.max(1, config.tickIntervalSeconds);
         long delay = Math.max(0, config.initialDelaySeconds);
         tickFuture = scheduler.scheduleAtFixedRate(this::tick, delay, interval, TimeUnit.SECONDS);
+        if (config.smoothChunkStreaming) {
+            long streamMs = Math.max(50, config.streamCatchUpIntervalMs);
+            streamFuture = scheduler.scheduleAtFixedRate(this::streamTick, delay * 1000L, streamMs, TimeUnit.MILLISECONDS);
+        }
         plugin.getLogger().atInfo().log(
                 "QuantumHy runtime started (interval=%ds, hardCap=%d, min=%d, max=%d, scan=%d, entityRadius=%s).",
                 interval, config.targetClientViewRadius, config.minClientViewRadius,
@@ -168,6 +181,7 @@ public final class FpsRuntime {
                 worldScratch.computeIfAbsent(worldUuid, ignored -> borrowList()).add(ref);
             }
             controller.retain(onlineScratch);
+            stream.retain(onlineScratch);
             playerSnapshotScratch.keySet().retainAll(onlineScratch);
             lastOnlineCount = onlineScratch.size();
 
@@ -191,6 +205,83 @@ public final class FpsRuntime {
             plugin.getLogger().atWarning().withCause(ex)
                     .log("QuantumHy tick failed: %s", ex.getClass().getSimpleName());
         }
+    }
+
+    private void streamTick() {
+        if (!running || !config.smoothChunkStreaming) {
+            return;
+        }
+        try {
+            Collection<PlayerRef> online = Universe.get().getPlayers();
+            if (online == null || online.isEmpty()) {
+                return;
+            }
+            long generation = ++streamGeneration;
+            long nowMs = System.currentTimeMillis();
+            streamTouchedScratch.clear();
+            for (PlayerRef ref : online) {
+                if (ref == null || !ref.isValid()) {
+                    continue;
+                }
+                UUID worldUuid = ref.getWorldUuid();
+                if (worldUuid == null) {
+                    continue;
+                }
+                StreamWorldBatch batch = streamWorldBatches.computeIfAbsent(
+                        worldUuid, StreamWorldBatch::new);
+                if (batch.collect(generation, nowMs, ref)) {
+                    streamTouchedScratch.add(batch);
+                }
+            }
+            for (int i = 0; i < streamTouchedScratch.size(); i++) {
+                StreamWorldBatch batch = streamTouchedScratch.get(i);
+                if (!batch.tryQueue(generation)) {
+                    continue;
+                }
+                UUID worldUuid = batch.worldUuid();
+                World world = Universe.get().getWorld(worldUuid);
+                if (world == null || !world.isAlive()) {
+                    batch.complete();
+                    continue;
+                }
+                try {
+                    world.execute(() -> {
+                        try {
+                            runStreamPass(world, worldUuid, batch.players(), batch.sampleTimeMs());
+                        } finally {
+                            batch.complete();
+                        }
+                    });
+                } catch (RuntimeException ex) {
+                    batch.complete();
+                    throw ex;
+                }
+            }
+        } catch (RuntimeException ex) {
+            plugin.getLogger().atWarning().withCause(ex)
+                    .log("QuantumHy stream tick failed: %s", ex.getClass().getSimpleName());
+        } finally {
+            streamTouchedScratch.clear();
+        }
+    }
+
+    private void runStreamPass(World world, UUID worldUuid, List<PlayerRef> batch, long nowMs) {
+        if (!running) {
+            return;
+        }
+        PressureGovernor.Snapshot pressureSnap = pressure.snapshotFor(worldUuid);
+        int cruiseS = pressure.maxChunksPerSecond(config, pressureSnap);
+        int cruiseT = pressure.maxChunksPerTick(config, pressureSnap);
+        String worldName = world.getName();
+        for (PlayerRef ref : batch) {
+            try {
+                stream.applyOne(ref, pressureSnap.pressured(), cruiseS, cruiseT, nowMs);
+                publishStreamRow(ref, worldName);
+            } catch (RuntimeException ex) {
+                plugin.getLogger().atWarning().withCause(ex).log("stream rate apply failed for a player");
+            }
+        }
+        publishSnapshot();
     }
 
     private void runWorldPass(World world, UUID worldUuid, List<PlayerRef> batch) {
@@ -289,8 +380,27 @@ public final class FpsRuntime {
         int loaded = tracker == null ? 0 : tracker.getLoadedSectionsCount();
         int loading = tracker == null ? 0 : tracker.getLoadingSectionsCount();
         int rate = tracker == null ? 0 : tracker.getMaxSectionsPerSecond();
+        int tickRate = tracker == null ? 0 : tracker.getMaxSectionsPerTick();
+        StreamRateController.Applied applied = stream.lastApplied(playerId);
         playerSnapshotScratch.put(playerId, new RuntimeSnapshot.PlayerRow(
-                decision.name(), worldName, loaded, loading, rate, decision.line()));
+                decision.name(), worldName, loaded, loading, rate, tickRate, applied.tier(), decision.line()));
+    }
+
+    private void publishStreamRow(@Nonnull PlayerRef ref, @Nonnull String worldName) {
+        UUID playerId = ref.getUuid();
+        if (playerId == null) {
+            return;
+        }
+        RuntimeSnapshot.PlayerRow previous = playerSnapshotScratch.get(playerId);
+        StreamRateController.Applied applied = stream.lastApplied(playerId);
+        ChunkTracker tracker = ref.getChunkTracker();
+        int loaded = tracker == null ? 0 : tracker.getLoadedSectionsCount();
+        int loading = tracker == null ? 0 : tracker.getLoadingSectionsCount();
+        String name = previous == null ? String.valueOf(playerId) : previous.name();
+        String decision = previous == null ? "" : previous.decisionLine();
+        playerSnapshotScratch.put(playerId, new RuntimeSnapshot.PlayerRow(
+                name, worldName, loaded, loading, applied.perSecond(), applied.perTick(),
+                applied.tier(), decision));
     }
 
     private void publishSnapshot() {
@@ -323,10 +433,62 @@ public final class FpsRuntime {
         return text.length() >= 8 ? text.substring(0, 8) : text;
     }
 
+    /** Scheduler-owned collection buffer, world-thread-owned while queued. */
+    private static final class StreamWorldBatch {
+        private final UUID worldUuid;
+        private final ArrayList<PlayerRef> players = new ArrayList<>(8);
+        private long generation;
+        private long sampleTimeMs;
+        private boolean queued;
+
+        StreamWorldBatch(UUID worldUuid) {
+            this.worldUuid = worldUuid;
+        }
+
+        synchronized boolean collect(long currentGeneration, long nowMs, PlayerRef ref) {
+            if (queued) {
+                return false;
+            }
+            boolean firstForTick = generation != currentGeneration;
+            if (firstForTick) {
+                generation = currentGeneration;
+                sampleTimeMs = nowMs;
+                players.clear();
+            }
+            players.add(ref);
+            return firstForTick;
+        }
+
+        synchronized boolean tryQueue(long currentGeneration) {
+            if (queued || generation != currentGeneration || players.isEmpty()) {
+                return false;
+            }
+            queued = true;
+            return true;
+        }
+
+        UUID worldUuid() {
+            return worldUuid;
+        }
+
+        synchronized List<PlayerRef> players() {
+            return players;
+        }
+
+        synchronized long sampleTimeMs() {
+            return sampleTimeMs;
+        }
+
+        synchronized void complete() {
+            players.clear();
+            queued = false;
+        }
+    }
+
     public void shutdown() {
         running = false;
         Collection<PlayerRef> online = Universe.get().getPlayers();
-        controller.restoreChunkStreaming(online);
+        stream.restoreAll(online);
         pressure.shutdown(config);
         EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO = originalEntityLodRatio;
         LeanCoreBridge.restoreOwnership();
@@ -334,12 +496,18 @@ public final class FpsRuntime {
             tickFuture.cancel(false);
             tickFuture = null;
         }
+        if (streamFuture != null) {
+            streamFuture.cancel(false);
+            streamFuture = null;
+        }
         if (scheduler != null) {
             scheduler.shutdownNow();
             scheduler = null;
         }
         playerSnapshotScratch.clear();
         worldSnapshotScratch.clear();
+        streamWorldBatches.clear();
+        streamTouchedScratch.clear();
         snapshot = RuntimeSnapshot.EMPTY;
     }
 }

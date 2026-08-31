@@ -70,7 +70,7 @@ public class QuantumHyPlugin extends JavaPlugin {
                         + "max=%d scan=%d densityLow=%.1f/ch densityHigh=%.1f/ch ringWeight=%s baseline=%.0f%% "
                         + "chunkLoadShrink=%s smoothing=%.2f adaptEntity=%s "
                         + "minEntityBlocks=%d entityLod=%.2fx vCull=%s entityCap=%s spawnHold=%s minDelta=%d streamGrace=%s "
-                        + "backlog>=%d smoothStreaming=%s maxChunks/s=%d maxChunks/tick=%d leanCoreTakeover=%s yield=%s "
+                        + "backlog>=%d smoothStreaming=%s catchUp=%s catchUpRate=%d/%d hold=%dms maxChunks/s=%d maxChunks/tick=%d leanCoreTakeover=%s yield=%s "
                         + "pressureGov=%s msptEnter=%.0f exitLast=%s effects=%s worldLevers=%s "
                         + "expand=%d shrink=%d entExpand=%d hyst=%d budget=%dms",
                 getManifest().getVersion(), config.verboseLog, config.tickIntervalSeconds,
@@ -88,6 +88,8 @@ public class QuantumHyPlugin extends JavaPlugin {
                 config.holdSpawnOnLoadingChunks,
                 config.minViewRadiusDelta,
                 config.respectStreamingGrace, config.streamingBacklogThreshold, config.smoothChunkStreaming,
+                config.streamCatchUpEnabled ? "on" : "off",
+                config.streamCatchUpPerSecond, config.streamCatchUpPerTick, config.streamCatchUpHoldMs,
                 config.maxChunksPerSecond, config.maxChunksPerTick, config.leanCoreTakeover,
                 config.yieldToLeanCoreViewRadius,
                 config.pressureGovernorEnabled, config.pressureMsptEnter,

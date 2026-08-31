@@ -207,6 +207,24 @@ public class QuantumHyConfig {
     public int maxChunksPerTick = 8;
 
     /**
+     * When true, the 250ms stream tick may raise send caps above cruise while the player is
+     * outrunning loaded terrain. {@link #smoothChunkStreaming} false disables cruise and catch-up.
+     */
+    public boolean streamCatchUpEnabled = true;
+
+    /** How often the stream tick runs, in milliseconds. */
+    public int streamCatchUpIntervalMs = 250;
+
+    /** Catch-up sections per second. Clamped to the connection baseline. */
+    public int streamCatchUpPerSecond = 256;
+
+    /** Catch-up sections per tick. Clamped to the connection baseline. */
+    public int streamCatchUpPerTick = 12;
+
+    /** After catch-up is no longer needed, wait this long before dropping back to cruise. */
+    public int streamCatchUpHoldMs = 1500;
+
+    /**
      * If LeanCore is installed, QuantumHy detects it on startup and turns off LeanCore's client
      * view-radius governance so the two don't both write it. QuantumHy then owns the view radius and
      * LeanCore keeps simulation radius, chunk throughput, and memory. Set false to leave LeanCore
@@ -556,6 +574,18 @@ public class QuantumHyConfig {
         }
         if (maxChunksPerTick < 0) {
             maxChunksPerTick = 0;
+        }
+        if (streamCatchUpIntervalMs < 50) {
+            streamCatchUpIntervalMs = 250;
+        }
+        if (streamCatchUpPerSecond < 0) {
+            streamCatchUpPerSecond = 0;
+        }
+        if (streamCatchUpPerTick < 0) {
+            streamCatchUpPerTick = 0;
+        }
+        if (streamCatchUpHoldMs < 0) {
+            streamCatchUpHoldMs = 0;
         }
         if (pressureMsptEnter <= 0) {
             pressureMsptEnter = 48.0D;

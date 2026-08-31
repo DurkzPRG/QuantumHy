@@ -23,6 +23,8 @@ public record RuntimeSnapshot(
             int chunksLoaded,
             int chunksLoading,
             int maxChunksPerSecond,
+            int maxChunksPerTick,
+            @Nonnull String streamTier,
             @Nonnull String decisionLine
     ) {
     }

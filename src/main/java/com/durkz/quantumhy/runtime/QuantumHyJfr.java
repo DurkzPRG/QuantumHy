@@ -72,7 +72,8 @@ public final class QuantumHyJfr {
         event.commit();
     }
 
-    public static void streaming(int perSecond, int perTick, boolean changed) {
+    public static void streaming(String tier, int perSecond, int perTick, int loading, int loaded,
+            long holdMs, boolean changed) {
         if (!REQUESTED) {
             return;
         }
@@ -80,8 +81,12 @@ public final class QuantumHyJfr {
         if (!event.isEnabled()) {
             return;
         }
+        event.tier = tier == null ? "" : tier;
         event.perSecond = perSecond;
         event.perTick = perTick;
+        event.loading = loading;
+        event.loaded = loaded;
+        event.holdMs = holdMs;
         event.changed = changed;
         event.commit();
     }
@@ -125,8 +130,12 @@ public final class QuantumHyJfr {
     @Name("durkz.QuantumHy.Streaming")
     @Label("QuantumHy chunk streaming")
     public static final class StreamingEvent extends Event {
+        @Label("Tier") public String tier;
         @Label("Sections per second") public int perSecond;
         @Label("Sections per tick") public int perTick;
+        @Label("Loading sections") public int loading;
+        @Label("Loaded sections") public int loaded;
+        @Label("Hold remaining (ms)") public long holdMs;
         @Label("Changed tracker") public boolean changed;
     }
 }

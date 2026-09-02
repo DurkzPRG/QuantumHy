@@ -29,7 +29,7 @@ public class QuantumHyConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /** Bumped when shipped defaults change; older QuantumHy.json files migrate on load. */
-    private static final int CURRENT_CONFIG_VERSION = 7;
+    private static final int CURRENT_CONFIG_VERSION = 8;
 
     private transient File configFile;
 
@@ -62,16 +62,16 @@ public class QuantumHyConfig {
     public int maxClientViewRadius = 32;
 
     /**
-     * Allow the density controller to reduce terrain view radius during normal play. Disabled by
-     * default so the entity and streaming levers do the work without shortening visible terrain.
+     * Allow the density controller to reduce terrain view radius during normal play. Enabled by
+     * default for the maximum-FPS profile; users can disable it to preserve visible terrain.
      */
-    public boolean adaptiveTerrainViewEnabled = false;
+    public boolean adaptiveTerrainViewEnabled = true;
 
     /**
      * Allow a temporary terrain trim when server-visible entity or streaming pressure stays high.
      * This is only a proxy for client load because the server does not receive client FPS metrics.
      */
-    public boolean emergencyTerrainTrimEnabled = false;
+    public boolean emergencyTerrainTrimEnabled = true;
 
     /** Chunk radius scanned around each player to estimate local render cost. */
     public int densityScanChunkRadius = 4;
@@ -472,16 +472,17 @@ public class QuantumHyConfig {
             notes.add("pressureExitRequiresLastTick=true");
         }
 
-        // Terrain preservation is the new default for both fresh and upgraded installations.
-        if (!json.has("adaptiveTerrainViewEnabled") || configVersion < 7) {
-            adaptiveTerrainViewEnabled = false;
+        // Version 7 temporarily shipped terrain preservation as the default during benchmarking.
+        // Version 8 restores maximum FPS once; explicit choices are preserved after this migration.
+        if (!json.has("adaptiveTerrainViewEnabled") || configVersion < 8) {
+            adaptiveTerrainViewEnabled = true;
             changed = true;
-            notes.add("adaptiveTerrainViewEnabled=false");
+            notes.add("adaptiveTerrainViewEnabled=true");
         }
-        if (!json.has("emergencyTerrainTrimEnabled") || configVersion < 7) {
-            emergencyTerrainTrimEnabled = false;
+        if (!json.has("emergencyTerrainTrimEnabled") || configVersion < 8) {
+            emergencyTerrainTrimEnabled = true;
             changed = true;
-            notes.add("emergencyTerrainTrimEnabled=false");
+            notes.add("emergencyTerrainTrimEnabled=true");
         }
 
         if (configVersion != CURRENT_CONFIG_VERSION) {

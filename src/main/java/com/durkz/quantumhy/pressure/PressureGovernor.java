@@ -5,7 +5,6 @@ import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.view.ViewAdaptPolicy;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.metrics.metric.HistoricMetric;
-import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.ClientEffectWorldSettings;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -16,11 +15,8 @@ import javax.annotation.Nullable;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
+import java.util.Set;
 
 /**
  * Watches real per-world MSPT from {@link World#getBufferedTickLengthMetricSet()} and, after
@@ -141,6 +137,7 @@ public final class PressureGovernor {
     public Snapshot update(@Nonnull World world, @Nonnull QuantumHyConfig config, int passIntervalSeconds) {
         UUID worldId = world.getWorldConfig().getUuid();
         WorldState state = worlds.computeIfAbsent(worldId, ignored -> new WorldState());
+        state.worldName = world.getName();
         int interval = Math.max(1, passIntervalSeconds);
 
         if (!config.pressureGovernorEnabled) {
@@ -246,48 +243,63 @@ public final class PressureGovernor {
         return Math.max(0, base - config.pressureVerticalTrimBlocks);
     }
 
-    public void applyEntityLod(@Nonnull QuantumHyConfig config, @Nonnull Snapshot snap) {
-        double ratio = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO_DEFAULT * config.entityLodAggressiveness;
-        if (snap.pressured()) {
-            ratio *= config.pressureLodMultiplier;
+    public boolean anyPressured(@Nonnull Set<UUID> activeWorlds) {
+        for (UUID worldId : activeWorlds) {
+            WorldState state = worlds.get(worldId);
+            if (state != null && state.tier == Tier.PRESSURED) {
+                return true;
+            }
         }
-        EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO = ratio;
+        return false;
     }
 
-    /** Restore every pressured world in parallel (same 2s budget total, not per world). */
-    public void shutdown(@Nonnull QuantumHyConfig config) {
+    @Nonnull
+    public Set<UUID> worldIds() {
+        return Set.copyOf(worlds.keySet());
+    }
+
+    public void releaseInactiveWorlds(@Nonnull Set<UUID> activeWorlds, @Nonnull QuantumHyConfig config) {
         var universe = com.hypixel.hytale.server.core.universe.Universe.get();
-        List<CompletableFuture<Void>> pending = new ArrayList<>();
         for (Map.Entry<UUID, WorldState> entry : worlds.entrySet()) {
-            World world = universe.getWorld(entry.getKey());
-            if (world == null || !world.isAlive() || entry.getValue().tier != Tier.PRESSURED) {
+            if (activeWorlds.contains(entry.getKey())) {
                 continue;
             }
+            World world = universe.getWorld(entry.getKey());
             WorldState state = entry.getValue();
-            CompletableFuture<Void> done = new CompletableFuture<>();
-            world.execute(() -> {
-                release(world, config, state, "shutdown");
-                done.complete(null);
-            });
-            pending.add(done);
-        }
-        if (!pending.isEmpty()) {
-            try {
-                CompletableFuture.allOf(pending.toArray(new CompletableFuture[0]))
-                        .get(2, TimeUnit.SECONDS);
-            } catch (Exception ex) {
-                logger.atWarning().withCause(ex).log(
-                        "pressure restore timed out for one or more worlds");
+            if (world == null || !world.isAlive() || state.tier != Tier.PRESSURED) {
+                worlds.remove(entry.getKey(), state);
+                if (state.worldName != null) {
+                    VERTICAL_BLOCKS.remove(state.worldName);
+                }
+                continue;
             }
+            world.execute(() -> {
+                release(world, config, state, "inactive");
+                worlds.remove(entry.getKey(), state);
+                if (state.worldName != null) {
+                    VERTICAL_BLOCKS.remove(state.worldName);
+                }
+            });
         }
+    }
+
+    public void clearSession() {
         worlds.clear();
         VERTICAL_BLOCKS.clear();
+        deactivate();
+    }
+
+    public void deactivate() {
+        if (active == this) {
+            active = null;
+        }
     }
 
     /** Called on world thread during an explicit release while the world is still alive. */
     public void restoreWorld(@Nonnull World world, @Nonnull QuantumHyConfig config) {
         WorldState state = worlds.get(world.getWorldConfig().getUuid());
-        if (state == null || state.tier != Tier.PRESSURED) {
+        if (state == null || (state.tier != Tier.PRESSURED
+                && !state.worldLeversApplied && !state.effectsTrimmed)) {
             return;
         }
         release(world, config, state, "shutdown");
@@ -443,6 +455,7 @@ public final class PressureGovernor {
     }
 
     private static final class WorldState {
+        String worldName;
         Tier tier = Tier.NORMAL;
         int aboveEnterPasses;
         int belowExitPasses;

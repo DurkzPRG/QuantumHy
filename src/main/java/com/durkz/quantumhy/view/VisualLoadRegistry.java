@@ -42,6 +42,12 @@ public final class VisualLoadRegistry {
         PLAYERS.keySet().retainAll(online);
     }
 
+    public static void remove(UUID playerId) {
+        if (playerId != null) {
+            PLAYERS.remove(playerId);
+        }
+    }
+
     public static void clear() {
         PLAYERS.clear();
     }

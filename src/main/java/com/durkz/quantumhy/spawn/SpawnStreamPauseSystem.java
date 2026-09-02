@@ -164,11 +164,11 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
 
     private boolean releaseCooldown(@Nonnull Store<ChunkStore> store, long chunkIndex) {
         ChunkSpawnData spawnData = chunkSpawnData(store, chunkIndex);
-        if (spawnData == null || spawnData.getLastSpawn() == 0L) {
-            return false;
-        }
-        spawnData.setLastSpawn(0L);
-        return true;
+        return spawnData != null && shouldReleaseCooldown(spawnData.getLastSpawn());
+    }
+
+    static boolean shouldReleaseCooldown(long lastSpawn) {
+        return lastSpawn != 0L;
     }
 
     private ChunkSpawnData chunkSpawnData(@Nonnull Store<ChunkStore> store, long chunkIndex) {
@@ -197,5 +197,14 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
     public static long drainReleasesSinceReport(@Nonnull String worldName) {
         AtomicLong counter = RELEASES_SINCE_REPORT.get(worldName);
         return counter == null ? 0L : counter.getAndSet(0L);
+    }
+
+    public static void clearSession() {
+        COOLDOWNS_SINCE_REPORT.clear();
+        RELEASES_SINCE_REPORT.clear();
+        STREAM_PAUSE_ACTIVE.clear();
+        COOLED_BY_WORLD.clear();
+        POOL_COOLDOWNS.reset();
+        POOL_RELEASES.reset();
     }
 }

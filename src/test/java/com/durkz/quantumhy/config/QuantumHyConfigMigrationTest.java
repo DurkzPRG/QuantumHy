@@ -177,4 +177,38 @@ class QuantumHyConfigMigrationTest {
         assertFalse(config.emergencyTerrainTrimEnabled);
         assertEquals(8, config.configVersion);
     }
+
+    @Test
+    void currentConfigNormalizesAndRewritesInvalidValues(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("QuantumHy.json");
+        Files.writeString(file, """
+                {
+                  "densitySmoothing": 0,
+                  "configVersion": 8
+                }
+                """, StandardCharsets.UTF_8);
+
+        QuantumHyConfig config = QuantumHyConfig.load(dir);
+
+        assertEquals(0.4D, config.densitySmoothing, 1e-9);
+        String saved = Files.readString(file, StandardCharsets.UTF_8);
+        assertTrue(saved.contains("\"densitySmoothing\": 0.4"));
+        assertTrue(saved.contains("\"minClientViewRadius\""));
+        assertFalse(Files.exists(dir.resolve("QuantumHy.json.tmp")));
+    }
+
+    @Test
+    void corruptConfigIsQuarantinedAndRecreated(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("QuantumHy.json");
+        Files.writeString(file, "{broken", StandardCharsets.UTF_8);
+
+        QuantumHyConfig config = QuantumHyConfig.load(dir);
+
+        assertEquals(8, config.configVersion);
+        assertTrue(Files.readString(file).contains("\"configVersion\": 8"));
+        try (var files = Files.list(dir)) {
+            assertTrue(files.anyMatch(path -> path.getFileName().toString()
+                    .startsWith("QuantumHy.json.corrupt.")));
+        }
+    }
 }

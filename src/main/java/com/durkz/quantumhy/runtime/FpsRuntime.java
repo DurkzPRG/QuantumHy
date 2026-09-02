@@ -2,6 +2,8 @@ package com.durkz.quantumhy.runtime;
 
 import com.durkz.quantumhy.QuantumHyPlugin;
 import com.durkz.quantumhy.config.QuantumHyConfig;
+import com.durkz.quantumhy.config.PlayerPreferences;
+import com.durkz.quantumhy.pressure.GlobalLodPolicy;
 import com.durkz.quantumhy.pressure.PressureGovernor;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
@@ -26,10 +28,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Runs the adaptive pass on a daemon timer. Each pass groups players by world and hands the
@@ -40,6 +45,7 @@ public final class FpsRuntime {
 
     private final QuantumHyPlugin plugin;
     private final QuantumHyConfig config;
+    private final PlayerPreferences preferences;
     private final ClientViewRadiusController controller;
     private final StreamRateController stream;
     private final PressureGovernor pressure;
@@ -53,10 +59,10 @@ public final class FpsRuntime {
     private boolean leanCoreHandled;
     private int leanCoreAttempts;
 
-    /** Reused each tick to avoid allocating maps/lists on the 5s cold path. */
     private final Map<UUID, List<PlayerRef>> worldScratch = new HashMap<>();
     private final Set<UUID> onlineScratch = new HashSet<>();
-    private final ArrayList<List<PlayerRef>> listPool = new ArrayList<>();
+    private final ConcurrentHashMap<UUID, String> worldNames = new ConcurrentHashMap<>();
+    private volatile Set<UUID> activeWorldIds = Set.of();
 
     /** Reused by the 250ms path. One queued batch per world prevents world-thread backlog. */
     private final ConcurrentHashMap<UUID, StreamWorldBatch> streamWorldBatches = new ConcurrentHashMap<>();
@@ -68,9 +74,10 @@ public final class FpsRuntime {
     private volatile RuntimeSnapshot snapshot = RuntimeSnapshot.EMPTY;
     private volatile int lastOnlineCount;
 
-    public FpsRuntime(QuantumHyPlugin plugin, QuantumHyConfig config) {
+    public FpsRuntime(QuantumHyPlugin plugin, QuantumHyConfig config, PlayerPreferences preferences) {
         this.plugin = plugin;
         this.config = config;
+        this.preferences = preferences;
         this.controller = new ClientViewRadiusController(config);
         this.stream = new StreamRateController(config);
         this.pressure = new PressureGovernor(plugin);
@@ -88,6 +95,11 @@ public final class FpsRuntime {
             return thread;
         });
         applyEntityLod();
+        if (config.entityLodAggressiveness != 1.0D) {
+            plugin.getLogger().atInfo().log(
+                    "Entity LOD culling set to %.2fx default. Pressure multiplier is enabled for this admin override.",
+                    config.entityLodAggressiveness);
+        }
         long interval = Math.max(1, config.tickIntervalSeconds);
         long delay = Math.max(0, config.initialDelaySeconds);
         tickFuture = scheduler.scheduleAtFixedRate(this::tick, delay, interval, TimeUnit.SECONDS);
@@ -105,13 +117,11 @@ public final class FpsRuntime {
 
     /** Set the global entity LOD ratio from config (server-wide). Restored on shutdown. */
     private void applyEntityLod() {
-        double ratio = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO_DEFAULT * config.entityLodAggressiveness;
+        double aggressiveness = GlobalLodPolicy.aggressiveness(
+                config.entityLodAggressiveness, config.pressureLodMultiplier,
+                pressure.anyPressured(activeWorldIds));
+        double ratio = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO_DEFAULT * aggressiveness;
         EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO = ratio;
-        if (config.entityLodAggressiveness != 1.0D) {
-            plugin.getLogger().atInfo().log(
-                    "Entity LOD culling set to %.2fx default (ratio=%.6f): small/distant entities drop sooner.",
-                    config.entityLodAggressiveness, ratio);
-        }
     }
 
     /** LeanCore coexistence: view-radius takeover and chunk-rate ownership. Retried a few passes. */
@@ -162,7 +172,7 @@ public final class FpsRuntime {
             ensureLeanCoreCoexistence();
             Collection<PlayerRef> online = Universe.get().getPlayers();
             if (online == null || online.isEmpty()) {
-                snapshot = RuntimeSnapshot.EMPTY;
+                clearOnlineState();
                 return;
             }
 
@@ -181,8 +191,15 @@ public final class FpsRuntime {
                 if (playerId != null) {
                     onlineScratch.add(playerId);
                 }
-                worldScratch.computeIfAbsent(worldUuid, ignored -> borrowList()).add(ref);
+                worldScratch.computeIfAbsent(worldUuid, ignored -> new ArrayList<>(4)).add(ref);
             }
+            Set<UUID> active = Set.copyOf(worldScratch.keySet());
+            activeWorldIds = active;
+            worldNames.keySet().retainAll(active);
+            pressure.releaseInactiveWorlds(active, config);
+            Set<String> activeNames = Set.copyOf(worldNames.values());
+            worldSnapshotScratch.keySet().retainAll(activeNames);
+            applyEntityLod();
             controller.retain(onlineScratch);
             stream.retain(onlineScratch);
             playerSnapshotScratch.keySet().retainAll(onlineScratch);
@@ -195,13 +212,7 @@ public final class FpsRuntime {
                 }
                 UUID worldUuid = entry.getKey();
                 List<PlayerRef> batch = entry.getValue();
-                world.execute(() -> {
-                    try {
-                        runWorldPass(world, worldUuid, batch);
-                    } finally {
-                        returnList(batch);
-                    }
-                });
+                world.execute(() -> runWorldPass(world, worldUuid, batch));
             }
             worldScratch.clear();
         } catch (RuntimeException ex) {
@@ -276,9 +287,13 @@ public final class FpsRuntime {
         PressureGovernor.StreamHealth health = pressure.readStreamHealth(world);
         for (PlayerRef ref : batch) {
             try {
+                if (!preferences.isOptimizationEnabled(ref.getUuid())) {
+                    stream.restoreOne(ref);
+                    continue;
+                }
                 StreamRateController.Transition transition = stream.applyOne(
                         ref, health, pressureSnap.pressured(), nowMs);
-                if (transition != null) {
+                if (transition != null && config.verboseLog) {
                     StreamRateController.Applied applied = transition.applied();
                     plugin.getLogger().atInfo().log(
                             "stream protect %s [world=%s player=%s] mspt=%.1f/%.1f "
@@ -295,7 +310,7 @@ public final class FpsRuntime {
     }
 
     private void runWorldPass(World world, UUID worldUuid, List<PlayerRef> batch) {
-        if (!running) {
+        if (!running || !activeWorldIds.contains(worldUuid)) {
             return;
         }
         String worldName = world.getName();
@@ -303,7 +318,8 @@ public final class FpsRuntime {
         PressureGovernor.Snapshot pressureSnap = pressure.update(world, config, config.tickIntervalSeconds);
         RuntimeMetrics.pressure(System.nanoTime() - pressureStartNs, pressureSnap.msptAvg10s(),
                 pressureSnap.msptLast(), pressureSnap.pressured());
-        pressure.applyEntityLod(config, pressureSnap);
+        worldNames.put(worldUuid, worldName);
+        applyEntityLod();
         PressureGovernor.ViewPassContext pass = pressure.viewContext(config, pressureSnap);
 
         long startNs = System.nanoTime();
@@ -315,7 +331,16 @@ public final class FpsRuntime {
         StringBuilder details = config.verboseLog ? new StringBuilder() : null;
         for (PlayerRef ref : batch) {
             try {
-                ClientViewRadiusController.Decision decision = controller.applyOne(ref, world, pass, deadlineNs);
+                ClientViewRadiusController.Decision decision;
+                if (preferences.isOptimizationEnabled(ref.getUuid())) {
+                    decision = controller.applyOne(ref, world, pass, deadlineNs);
+                } else {
+                    controller.restoreOne(ref);
+                    stream.restoreOne(ref);
+                    controller.forget(ref.getUuid());
+                    stream.forget(ref.getUuid());
+                    decision = controller.observeDisabled(ref);
+                }
                 if (decision == null) {
                     continue;
                 }
@@ -344,8 +369,6 @@ public final class FpsRuntime {
             plugin.getLogger().atInfo().log("pass [world=%s] players=%d changed=%d: %s",
                     shortId(worldUuid), batch.size(), changed,
                     details.length() == 0 ? "(none readable)" : details.toString());
-        } else if (changed > 0) {
-            plugin.getLogger().atInfo().log("pass [world=%s] changed %d view radius", shortId(worldUuid), changed);
         }
         RuntimeMetrics.pass(System.nanoTime() - startNs, batch.size(), changed, pressureSnap.pressured());
     }
@@ -359,6 +382,9 @@ public final class FpsRuntime {
         boolean streamPause = SpawnStreamPauseSystem.isStreamPauseActive(worldName);
         long vertical = EntityCullSystem.drainVerticalSinceReport(worldName);
         long cap = EntityCullSystem.drainCapSinceReport(worldName);
+        if (!config.verboseLog) {
+            return;
+        }
         if (!streamPause && poolCooldowns == 0L && poolReleases == 0L && poolCooled == 0
                 && vertical == 0L && cap == 0L && !pressureSnap.pressured()) {
             return;
@@ -393,7 +419,7 @@ public final class FpsRuntime {
         int tickRate = tracker == null ? 0 : tracker.getMaxSectionsPerTick();
         StreamRateController.Applied applied = stream.lastApplied(playerId);
         playerSnapshotScratch.put(playerId, new RuntimeSnapshot.PlayerRow(
-                decision.name(), worldName, loaded, loading, rate, tickRate, applied.tier(),
+                playerId, decision.name(), worldName, loaded, loading, rate, tickRate, applied.tier(),
                 applied.loadingDelta(), applied.msptAverage(), applied.msptLast(), applied.protectionCause(),
                 decision.chunkCurrent(), decision.chunkTarget(), decision.entCurrent(), decision.entTarget(),
                 decision.visualCandidates(), decision.visualVisible(), decision.visualPressure(),
@@ -409,20 +435,6 @@ public final class FpsRuntime {
                 lastOnlineCount,
                 List.copyOf(playerSnapshotScratch.values()),
                 Map.copyOf(worldSnapshotScratch));
-    }
-
-    private List<PlayerRef> borrowList() {
-        if (listPool.isEmpty()) {
-            return new ArrayList<>(8);
-        }
-        return listPool.remove(listPool.size() - 1);
-    }
-
-    private void returnList(@Nonnull List<PlayerRef> batch) {
-        batch.clear();
-        if (listPool.size() < 16) {
-            listPool.add(batch);
-        }
     }
 
     private static String shortId(UUID uuid) {
@@ -482,14 +494,53 @@ public final class FpsRuntime {
         }
     }
 
-    public void shutdown() {
+    public void forgetPlayer(UUID playerId) {
+        controller.forget(playerId);
+        stream.forget(playerId);
+        playerSnapshotScratch.remove(playerId);
+        VisualLoadRegistry.remove(playerId);
+        publishSnapshot();
+    }
+
+    public void optimizationChanged(@Nonnull PlayerRef playerRef, boolean enabled) {
+        UUID playerId = playerRef.getUuid();
+        if (playerId == null) {
+            return;
+        }
+        UUID worldId = playerRef.getWorldUuid();
+        World world = worldId == null ? null : Universe.get().getWorld(worldId);
+        if (!enabled && world != null && world.isAlive()) {
+            world.execute(() -> {
+                controller.restoreOne(playerRef);
+                stream.restoreOne(playerRef);
+                forgetPlayer(playerId);
+            });
+            return;
+        }
+        forgetPlayer(playerId);
+    }
+
+    private void clearOnlineState() {
+        onlineScratch.clear();
+        worldScratch.clear();
+        activeWorldIds = Set.of();
+        worldNames.clear();
+        pressure.releaseInactiveWorlds(Set.of(), config);
+        controller.clear();
+        stream.clear();
+        playerSnapshotScratch.clear();
+        worldSnapshotScratch.clear();
+        streamWorldBatches.clear();
+        lastOnlineCount = 0;
+        snapshot = RuntimeSnapshot.EMPTY;
+        applyEntityLod();
+    }
+
+    public synchronized void shutdown() {
+        if (!running && scheduler == null) {
+            return;
+        }
         running = false;
-        Collection<PlayerRef> online = Universe.get().getPlayers();
-        controller.restoreAll(online);
-        stream.restoreAll(online);
-        pressure.shutdown(config);
-        EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO = originalEntityLodRatio;
-        LeanCoreBridge.restoreOwnership();
         if (tickFuture != null) {
             tickFuture.cancel(false);
             tickFuture = null;
@@ -502,11 +553,82 @@ public final class FpsRuntime {
             scheduler.shutdownNow();
             scheduler = null;
         }
+
+        Map<UUID, List<PlayerRef>> playersByWorld = new HashMap<>();
+        Collection<PlayerRef> online = Universe.get().getPlayers();
+        if (online != null) {
+            for (PlayerRef ref : online) {
+                if (ref == null || !ref.isValid() || ref.getWorldUuid() == null) {
+                    continue;
+                }
+                playersByWorld.computeIfAbsent(ref.getWorldUuid(), ignored -> new ArrayList<>(4)).add(ref);
+            }
+        }
+        Set<UUID> restoreWorlds = new HashSet<>(playersByWorld.keySet());
+        restoreWorlds.addAll(pressure.worldIds());
+        List<CompletableFuture<Void>> pending = new ArrayList<>();
+        for (UUID worldId : restoreWorlds) {
+            World world = Universe.get().getWorld(worldId);
+            if (world == null || !world.isAlive()) {
+                continue;
+            }
+            List<PlayerRef> batch = playersByWorld.getOrDefault(worldId, List.of());
+            CompletableFuture<Void> done = new CompletableFuture<>();
+            pending.add(done);
+            world.execute(() -> {
+                try {
+                    controller.restoreAll(batch);
+                    stream.restoreAll(batch);
+                    pressure.restoreWorld(world, config);
+                    done.complete(null);
+                } catch (RuntimeException ex) {
+                    done.completeExceptionally(ex);
+                }
+            });
+        }
+        CompletableFuture<Void> restoreAll = CompletableFuture.allOf(
+                pending.toArray(new CompletableFuture[0]));
+        boolean restored = pending.isEmpty();
+        if (!restored) {
+            try {
+                restoreAll.get(2, TimeUnit.SECONDS);
+                restored = true;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                plugin.getLogger().atWarning().withCause(interrupted)
+                        .log("QuantumHy restore was interrupted");
+            } catch (TimeoutException timedOut) {
+                plugin.getLogger().atWarning().withCause(timedOut)
+                        .log("QuantumHy restore timed out for one or more worlds");
+            } catch (ExecutionException failed) {
+                plugin.getLogger().atWarning().withCause(failed)
+                        .log("QuantumHy restore failed in one or more worlds");
+            }
+        }
+
+        EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO = originalEntityLodRatio;
+        LeanCoreBridge.restoreOwnership();
+        pressure.deactivate();
+        if (restored) {
+            clearAdaptiveState();
+        } else {
+            restoreAll.whenComplete((ignored, failure) -> clearAdaptiveState());
+        }
         playerSnapshotScratch.clear();
         worldSnapshotScratch.clear();
         streamWorldBatches.clear();
         streamTouchedScratch.clear();
         VisualLoadRegistry.clear();
+        EntityCullSystem.clearSession();
+        SpawnStreamPauseSystem.clearSession();
+        worldNames.clear();
+        activeWorldIds = Set.of();
         snapshot = RuntimeSnapshot.EMPTY;
+    }
+
+    private void clearAdaptiveState() {
+        pressure.clearSession();
+        controller.clear();
+        stream.clear();
     }
 }

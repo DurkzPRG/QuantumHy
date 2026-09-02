@@ -2,6 +2,7 @@ package com.durkz.quantumhy;
 
 import com.durkz.quantumhy.command.QuantumCommand;
 import com.durkz.quantumhy.config.QuantumHyConfig;
+import com.durkz.quantumhy.config.PlayerPreferences;
 import com.durkz.quantumhy.permissions.QuantumHyPermissions;
 import com.durkz.quantumhy.runtime.FpsRuntime;
 import com.durkz.quantumhy.runtime.RuntimeSnapshot;
@@ -21,6 +22,7 @@ import org.checkerframework.checker.nullness.compatqual.NonNullDecl;
 public class QuantumHyPlugin extends JavaPlugin {
 
     private QuantumHyConfig config;
+    private PlayerPreferences playerPreferences;
     private FpsRuntime runtime;
 
     public QuantumHyPlugin(@NonNullDecl JavaPluginInit init) {
@@ -32,6 +34,7 @@ public class QuantumHyPlugin extends JavaPlugin {
         super.setup();
 
         config = QuantumHyConfig.load(getDataDirectory());
+        playerPreferences = PlayerPreferences.load(getDataDirectory());
 
         QuantumHyPermissions.register();
         getCommandRegistry().registerCommand(new QuantumCommand(config, this));
@@ -42,12 +45,13 @@ public class QuantumHyPlugin extends JavaPlugin {
             return;
         }
 
-        runtime = new FpsRuntime(this, config);
+        runtime = new FpsRuntime(this, config, playerPreferences);
 
         if (config.adaptEntityRadius || config.emergencyTerrainTrimEnabled
                 || config.maxEntityVerticalDistance > 0 || config.maxVisibleEntitiesPerPlayer > 0) {
             getEntityStoreRegistry().registerSystem(
-                    new EntityCullSystem(EntityTrackerSystems.EntityViewer.getComponentType(), config));
+                    new EntityCullSystem(EntityTrackerSystems.EntityViewer.getComponentType(), config,
+                            playerPreferences));
         }
 
         if (config.holdSpawnOnLoadingChunks) {
@@ -63,8 +67,13 @@ public class QuantumHyPlugin extends JavaPlugin {
             PlayerRef playerRef = event.getHolder().getComponent(PlayerRef.getComponentType());
             ModUpdateChecker.getInstance().notifyPlayer(playerRef);
         });
-        getEventRegistry().registerGlobal(PlayerDisconnectEvent.class,
-                event -> ModUpdateChecker.getInstance().forgetPlayer(event.getPlayerRef().getUuid()));
+        getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, event -> {
+            PlayerRef playerRef = event.getPlayerRef();
+            ModUpdateChecker.getInstance().forgetPlayer(playerRef.getUuid());
+            if (runtime != null) {
+                runtime.forgetPlayer(playerRef.getUuid());
+            }
+        });
 
         String configDump = String.format(java.util.Locale.ROOT,
                 "QuantumHy %s setup. config: verboseLog=%s tickInterval=%ds initialDelay=%ds hardCap=%d min=%d "
@@ -107,6 +116,22 @@ public class QuantumHyPlugin extends JavaPlugin {
     public RuntimeSnapshot runtimeSnapshot() {
         FpsRuntime active = runtime;
         return active == null ? RuntimeSnapshot.EMPTY : active.snapshot();
+    }
+
+    public boolean isOptimizationEnabled(PlayerRef playerRef) {
+        return playerPreferences == null || playerPreferences.isOptimizationEnabled(
+                playerRef == null ? null : playerRef.getUuid());
+    }
+
+    public boolean setOptimizationEnabled(PlayerRef playerRef, boolean enabled) {
+        if (playerPreferences == null || playerRef == null || playerRef.getUuid() == null) {
+            return false;
+        }
+        boolean changed = playerPreferences.setOptimizationEnabled(playerRef.getUuid(), enabled);
+        if (changed && runtime != null) {
+            runtime.optimizationChanged(playerRef, enabled);
+        }
+        return changed;
     }
 
     @Override

@@ -67,6 +67,16 @@ public final class StreamRateController {
         players.entrySet().removeIf(entry -> !online.contains(entry.getKey()));
     }
 
+    public void forget(@Nullable UUID playerId) {
+        if (playerId != null) {
+            players.remove(playerId);
+        }
+    }
+
+    public void clear() {
+        players.clear();
+    }
+
     /**
      * Apply cruise or catch-up caps for one player. Must run on that player's world thread.
      * Returns a transition only when entering or leaving the protection tier.
@@ -200,9 +210,16 @@ public final class StreamRateController {
             if (ref == null) {
                 continue;
             }
-            UUID playerId = ref.getUuid();
-            restore(ref.getChunkTracker(), playerId == null ? null : players.get(playerId));
+            restoreOne(ref);
         }
+    }
+
+    public void restoreOne(@Nullable PlayerRef ref) {
+        if (ref == null) {
+            return;
+        }
+        UUID playerId = ref.getUuid();
+        restore(ref.getChunkTracker(), playerId == null ? null : players.get(playerId));
     }
 
     private static void restore(@Nullable ChunkTracker tracker, @Nullable PlayerStreamState state) {

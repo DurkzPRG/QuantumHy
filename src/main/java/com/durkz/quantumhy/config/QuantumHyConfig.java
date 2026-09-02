@@ -3,6 +3,7 @@ package com.durkz.quantumhy.config;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import com.hypixel.hytale.logger.HytaleLogger;
 
@@ -133,7 +134,7 @@ public class QuantumHyConfig {
     /**
      * Global entity LOD culling. {@code 1.0} is the engine default; higher culls small and distant
      * entities sooner (e.g. {@code 1.5} drops them at ~80% of the default distance). Server-wide, not
-     * per player, applied once at startup and restored on shutdown.
+     * per player, treated as an explicit admin override and restored on shutdown.
      */
     public double entityLodAggressiveness = 1.0D;
 
@@ -272,7 +273,7 @@ public class QuantumHyConfig {
     /** Under pressure, multiply {@link #maxChunksPerSecond} and {@link #maxChunksPerTick}. */
     public double pressureChunkRateMultiplier = 0.75D;
 
-    /** Under pressure, multiply entity LOD ratio by this on top of {@link #entityLodAggressiveness}. */
+    /** Under pressure, multiply an explicit {@link #entityLodAggressiveness} above {@code 1.0}. */
     public double pressureLodMultiplier = 1.15D;
 
     /** Under pressure, subtract this many blocks from {@link #maxEntityVerticalDistance}. */
@@ -322,13 +323,23 @@ public class QuantumHyConfig {
                 loaded.configFile = file;
                 JsonObject root = parseRoot(raw);
                 boolean migrated = loaded.migrateIfNeeded(root);
+                JsonObject beforeDefaults = GSON.toJsonTree(loaded).getAsJsonObject();
                 loaded.applyDefaults();
-                if (migrated) {
+                JsonObject normalized = GSON.toJsonTree(loaded).getAsJsonObject();
+                List<String> normalizedKeys = changedKeys(beforeDefaults, normalized);
+                List<String> missingKeys = missingKeys(root, normalized);
+                if (migrated || !normalizedKeys.isEmpty() || !missingKeys.isEmpty()) {
                     loaded.save();
                     try {
-                        HytaleLogger.getLogger().at(Level.INFO).log(
-                                "QuantumHy config migrated to version %d: %s",
-                                CURRENT_CONFIG_VERSION, String.join(", ", loaded.lastMigrationNotes));
+                        List<String> changes = new ArrayList<>(loaded.lastMigrationNotes);
+                        if (!normalizedKeys.isEmpty()) {
+                            changes.add("normalized=" + String.join("|", normalizedKeys));
+                        }
+                        if (!missingKeys.isEmpty()) {
+                            changes.add("added=" + String.join("|", missingKeys));
+                        }
+                        HytaleLogger.getLogger().at(Level.INFO).log("QuantumHy config repaired: %s",
+                                String.join(", ", changes));
                     } catch (RuntimeException | LinkageError ignored) {
                         // Logger may be unavailable in unit tests.
                     }
@@ -341,6 +352,7 @@ public class QuantumHyConfig {
 
         config.applyDefaults();
         config.configVersion = CURRENT_CONFIG_VERSION;
+        config.save();
         return config;
     }
 
@@ -362,6 +374,27 @@ public class QuantumHyConfig {
         } catch (RuntimeException ignored) {
             return new JsonObject();
         }
+    }
+
+    private static List<String> changedKeys(JsonObject before, JsonObject after) {
+        List<String> changed = new ArrayList<>();
+        for (String key : after.keySet()) {
+            JsonElement oldValue = before.get(key);
+            if (oldValue == null || !oldValue.equals(after.get(key))) {
+                changed.add(key);
+            }
+        }
+        return changed;
+    }
+
+    private static List<String> missingKeys(JsonObject loaded, JsonObject complete) {
+        List<String> missing = new ArrayList<>();
+        for (String key : complete.keySet()) {
+            if (!loaded.has(key)) {
+                missing.add(key);
+            }
+        }
+        return missing;
     }
 
     /**
@@ -559,7 +592,7 @@ public class QuantumHyConfig {
             chunkLoadLowChunks = Math.max(0, chunkLoadHighChunks / 2);
         }
         if (densitySmoothing <= 0 || densitySmoothing > 1) {
-            densitySmoothing = 1.0D;
+            densitySmoothing = 0.4D;
         }
         if (minEntityViewBlocks < 0) {
             minEntityViewBlocks = 0;
@@ -648,9 +681,9 @@ public class QuantumHyConfig {
         if (configFile == null) {
             return;
         }
+        Path target = configFile.toPath();
+        Path temp = target.resolveSibling(configFile.getName() + ".tmp");
         try {
-            Path target = configFile.toPath();
-            Path temp = target.resolveSibling(configFile.getName() + ".tmp");
             try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
                 GSON.toJson(this, writer);
             }
@@ -663,6 +696,11 @@ public class QuantumHyConfig {
         } catch (IOException failed) {
             HytaleLogger.getLogger().at(Level.WARNING).withCause(failed)
                     .log("QuantumHy failed to save config to %s", configFile.getAbsolutePath());
+        } finally {
+            try {
+                Files.deleteIfExists(temp);
+            } catch (IOException ignored) {
+            }
         }
     }
 }

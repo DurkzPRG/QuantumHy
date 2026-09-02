@@ -6,6 +6,7 @@ import javax.annotation.Nonnull;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /** Immutable /q status view built from the last adaptive pass (no live server re-walk). */
 public record RuntimeSnapshot(
@@ -18,6 +19,7 @@ public record RuntimeSnapshot(
             0, 0, List.of(), Map.of());
 
     public record PlayerRow(
+            @Nonnull UUID playerId,
             @Nonnull String name,
             @Nonnull String worldName,
             int chunksLoaded,

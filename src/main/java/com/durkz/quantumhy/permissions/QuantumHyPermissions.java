@@ -17,6 +17,10 @@ public final class QuantumHyPermissions {
 
     /** Update notices are operational information, so only operators and explicit admins receive them. */
     public static boolean canReceiveUpdateNotice(PlayerRef playerRef) {
+        return isAdmin(playerRef);
+    }
+
+    public static boolean isAdmin(PlayerRef playerRef) {
         if (playerRef == null || playerRef.getUuid() == null) {
             return false;
         }

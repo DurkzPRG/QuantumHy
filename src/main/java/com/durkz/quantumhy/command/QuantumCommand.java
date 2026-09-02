@@ -3,33 +3,31 @@ package com.durkz.quantumhy.command;
 import com.durkz.quantumhy.QuantumHyPlugin;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
+import com.durkz.quantumhy.permissions.QuantumHyPermissions;
 import com.durkz.quantumhy.pressure.PressureGovernor;
 import com.durkz.quantumhy.runtime.RuntimeSnapshot;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.view.EntityCullSystem;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
+import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
+import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
 import com.hypixel.hytale.server.core.command.system.basecommands.AbstractCommandCollection;
 import com.hypixel.hytale.server.core.command.system.basecommands.CommandBase;
-import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
-import com.hypixel.hytale.server.core.universe.Universe;
-import com.hypixel.hytale.server.core.universe.world.World;
 
-import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
-import java.util.Collection;
 import java.util.Locale;
+import java.util.UUID;
 
-/** {@code /q status} (alias /quantumhy). Read-only status and diagnostics for what QuantumHy is doing right now. */
 public class QuantumCommand extends AbstractCommandCollection {
 
     public QuantumCommand(QuantumHyConfig config, QuantumHyPlugin plugin) {
-        super("quantumhy", "QuantumHy status and diagnostics");
+        super("quantumhy", "QuantumHy controls and diagnostics");
         requireNoPermission();
         addAliases("q", "qhy");
         addSubCommand(new StatusSubCommand(config, plugin));
+        addSubCommand(new OptimizeSubCommand(plugin));
         addSubCommand(new HelpSubCommand());
     }
 
@@ -47,7 +45,44 @@ public class QuantumCommand extends AbstractCommandCollection {
 
         @Override
         protected void executeSync(CommandContext ctx) {
-            status(ctx, config, plugin);
+            if (ctx.sender() instanceof PlayerRef playerRef
+                    && !QuantumHyPermissions.isAdmin(playerRef)) {
+                personalStatus(ctx, plugin, playerRef);
+                return;
+            }
+            adminStatus(ctx, config, plugin);
+        }
+    }
+
+    private static final class OptimizeSubCommand extends CommandBase {
+
+        private final QuantumHyPlugin plugin;
+        private final RequiredArg<String> modeArg;
+
+        OptimizeSubCommand(QuantumHyPlugin plugin) {
+            super("optimize", "Control QuantumHy for yourself");
+            requireNoPermission();
+            this.plugin = plugin;
+            this.modeArg = withRequiredArg("mode", "on or off", ArgTypes.STRING);
+        }
+
+        @Override
+        protected void executeSync(CommandContext ctx) {
+            if (!(ctx.sender() instanceof PlayerRef playerRef)) {
+                send(ctx, "This command can only be used by a player.", "#FF5555");
+                return;
+            }
+            String mode = ctx.get(modeArg).trim().toLowerCase(Locale.ROOT);
+            if (!"on".equals(mode) && !"off".equals(mode)) {
+                send(ctx, "Usage: /q optimize <on|off>", "#FFAA00");
+                return;
+            }
+            boolean enabled = "on".equals(mode);
+            boolean changed = plugin.setOptimizationEnabled(playerRef, enabled);
+            send(ctx, enabled
+                    ? "QuantumHy optimization enabled for you."
+                    : "QuantumHy optimization disabled for you. Your personal limits are being restored.",
+                    changed ? "#55FF55" : "#AAAAAA");
         }
     }
 
@@ -60,12 +95,39 @@ public class QuantumCommand extends AbstractCommandCollection {
 
         @Override
         protected void executeSync(CommandContext ctx) {
-            help(ctx);
+            send(ctx, "QuantumHy commands", "#55FFFF");
+            send(ctx, "/q optimize <on|off> - control optimization for yourself", "#AAAAAA");
+            send(ctx, "/q status - show your current QuantumHy status", "#AAAAAA");
+            send(ctx, "/q help - this list", "#AAAAAA");
+            if (!(ctx.sender() instanceof PlayerRef playerRef) || QuantumHyPermissions.isAdmin(playerRef)) {
+                send(ctx, "Admins and console receive full server diagnostics from /q status.", "#999999");
+            }
         }
     }
 
-    private static void status(CommandContext ctx, QuantumHyConfig config, QuantumHyPlugin plugin) {
+    private static void sendOptimizationState(CommandContext ctx, QuantumHyPlugin plugin, PlayerRef playerRef) {
+        boolean enabled = plugin.isOptimizationEnabled(playerRef);
+        send(ctx, "QuantumHy optimization is " + (enabled ? "enabled" : "disabled") + " for you.",
+                enabled ? "#55FF55" : "#FFAA00");
+    }
+
+    private static void personalStatus(CommandContext ctx, QuantumHyPlugin plugin, PlayerRef playerRef) {
         send(ctx, "QuantumHy status", "#55FFFF");
+        sendOptimizationState(ctx, plugin, playerRef);
+        RuntimeSnapshot.PlayerRow row = findPlayer(plugin.runtimeSnapshot(), playerRef.getUuid());
+        if (row == null) {
+            send(ctx, "Runtime data: awaiting first pass", "#AAAAAA");
+            return;
+        }
+        send(ctx, String.format(Locale.ROOT,
+                "terrain=%d->%d entity=%d->%d visible=%d/%d stream=%s",
+                row.terrainCurrent(), row.terrainTarget(), row.entityCurrent(), row.entityTarget(),
+                row.visualVisible(), row.visualCandidates(), row.streamTier()), "#CCCCCC");
+        send(ctx, "decision: " + row.decisionLine(), "#999999");
+    }
+
+    private static void adminStatus(CommandContext ctx, QuantumHyConfig config, QuantumHyPlugin plugin) {
+        send(ctx, "QuantumHy server status", "#55FFFF");
         send(ctx, config.enabled ? "enabled" : "DISABLED via config", config.enabled ? "#55FF55" : "#FF5555");
 
         double lodRatio = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO;
@@ -88,11 +150,13 @@ public class QuantumCommand extends AbstractCommandCollection {
                 EntityCullSystem.VERTICAL_CULLED.sum(), EntityCullSystem.CAP_CULLED.sum()), "#AAAAAA");
 
         RuntimeSnapshot snap = plugin.runtimeSnapshot();
-        String worldName = firstWorldName(snap, plugin);
-        RuntimeSnapshot.WorldRow worldRow = snap.worldOrDefault(worldName);
-        PressureGovernor.Snapshot pressure = config.pressureGovernorEnabled
-                ? worldRow.pressure()
-                : PressureGovernor.Snapshot.idle();
+        PressureGovernor.Snapshot pressure = snap.worlds().values().stream()
+                .map(RuntimeSnapshot.WorldRow::pressure)
+                .filter(PressureGovernor.Snapshot::pressured)
+                .findFirst()
+                .orElseGet(() -> snap.worlds().values().stream()
+                        .map(RuntimeSnapshot.WorldRow::pressure)
+                        .findFirst().orElse(PressureGovernor.Snapshot.idle()));
         send(ctx, String.format(Locale.ROOT,
                 "pressure: %s enter=%.0fms exit=%.0fms effects=%s worldLevers=%s",
                 config.pressureGovernorEnabled ? PressureGovernor.formatStatus(pressure) : "disabled",
@@ -100,96 +164,36 @@ public class QuantumCommand extends AbstractCommandCollection {
                 config.pressureTrimClientEffects ? "on" : "off",
                 config.pressureWorldLevers ? "on" : "off"), "#AAAAAA");
         send(ctx, String.format(Locale.ROOT,
-                "spawn pause: %s pause=%s threshold=%d (section backlog) pool=%d cooldowns=%d",
+                "spawn pause: %s poolCooldowns=%d streaming=%s catchUp=%s owner=%s",
                 config.holdSpawnOnLoadingChunks ? "on" : "off",
-                worldRow.streamPause() ? "on" : "off",
-                config.streamingBacklogThreshold,
-                worldRow.poolCooled(),
-                SpawnStreamPauseSystem.POOL_COOLDOWNS.sum()), "#AAAAAA");
-        send(ctx, String.format(Locale.ROOT,
-                "streaming: smooth=%s catchUp=%s cruise=%s/%s burst=%d/%d owner=%s",
-                config.smoothChunkStreaming,
-                config.streamCatchUpEnabled ? "on" : "off",
-                config.maxChunksPerSecond > 0 ? String.valueOf(config.maxChunksPerSecond) : "connection-default",
-                config.maxChunksPerTick > 0 ? String.valueOf(config.maxChunksPerTick) : "connection-default",
-                config.streamCatchUpPerSecond, config.streamCatchUpPerTick,
-                LeanCoreBridge.chunkRateOwnerLabel(config)), "#AAAAAA");
-
-        String lean = String.format(Locale.ROOT, "state=%s view=%s",
-                LeanCoreBridge.ownership(), LeanCoreBridge.viewRadiusOwnerLabel(config));
-        send(ctx, "LeanCore: " + lean, "#AAAAAA");
-
-        int count = snap.onlineCount() > 0 ? snap.onlineCount() : countOnline();
-        send(ctx, "online players: " + count, "#AAAAAA");
-        if (!snap.playersOrEmpty().isEmpty()) {
-            for (RuntimeSnapshot.PlayerRow row : snap.players()) {
-                send(ctx, String.format(Locale.ROOT,
-                        "- %s chunks loaded=%d loading=%d delta=%+d rate=%d/s tick=%d tier=%s "
-                                + "streamMspt=%.1f/%.1f protect=%s | %s",
-                        row.name(), row.chunksLoaded(), row.chunksLoading(),
-                        row.loadingDelta(), row.maxChunksPerSecond(), row.maxChunksPerTick(), row.streamTier(),
-                        row.streamMsptLast(), row.streamMsptAverage(), row.streamProtectionCause(),
-                        row.decisionLine()), "#CCCCCC");
-                send(ctx, String.format(Locale.ROOT,
-                        "  terrain=%d->%d entity=%d->%d visual=%d/%d pressure=%.2f emergency=%s",
-                        row.terrainCurrent(), row.terrainTarget(), row.entityCurrent(), row.entityTarget(),
-                        row.visualVisible(), row.visualCandidates(), row.visualPressure(),
-                        row.visualEmergency() ? "on" : "off"), "#999999");
-            }
+                SpawnStreamPauseSystem.POOL_COOLDOWNS.sum(), config.smoothChunkStreaming,
+                config.streamCatchUpEnabled, LeanCoreBridge.chunkRateOwnerLabel(config)), "#AAAAAA");
+        send(ctx, "LeanCore: state=" + LeanCoreBridge.ownership()
+                + " view=" + LeanCoreBridge.viewRadiusOwnerLabel(config), "#AAAAAA");
+        send(ctx, "online players: " + snap.onlineCount(), "#AAAAAA");
+        if (snap.players().isEmpty()) {
+            send(ctx, "runtime data: awaiting first pass", "#AAAAAA");
             return;
         }
-        Collection<PlayerRef> online = Universe.get().getPlayers();
-        if (online == null) {
-            return;
-        }
-        for (PlayerRef ref : online) {
-            if (ref == null || !ref.isValid()) {
-                continue;
-            }
-            ChunkTracker tracker = ref.getChunkTracker();
-            String line = "- " + nameOf(ref);
-            if (tracker != null) {
-                line += String.format(Locale.ROOT, " chunks loaded=%d loading=%d rate=%d/s tick=%d",
-                        tracker.getLoadedSectionsCount(), tracker.getLoadingSectionsCount(),
-                        tracker.getMaxSectionsPerSecond(), tracker.getMaxSectionsPerTick());
-            }
-            send(ctx, line + " (awaiting first pass)", "#CCCCCC");
+        for (RuntimeSnapshot.PlayerRow row : snap.players()) {
+            send(ctx, String.format(Locale.ROOT,
+                    "- %s world=%s chunks=%d/%d rate=%d/%d tier=%s | %s",
+                    row.name(), row.worldName(), row.chunksLoaded(), row.chunksLoading(),
+                    row.maxChunksPerSecond(), row.maxChunksPerTick(), row.streamTier(),
+                    row.decisionLine()), "#CCCCCC");
         }
     }
 
-    @Nonnull
-    private static String firstWorldName(@Nonnull RuntimeSnapshot snap, @Nonnull QuantumHyPlugin plugin) {
-        if (!snap.players().isEmpty()) {
-            return snap.players().getFirst().worldName();
+    private static RuntimeSnapshot.PlayerRow findPlayer(RuntimeSnapshot snapshot, UUID playerId) {
+        if (playerId == null) {
+            return null;
         }
-        Collection<PlayerRef> online = Universe.get().getPlayers();
-        if (online != null) {
-            for (PlayerRef ref : online) {
-                if (ref != null && ref.isValid() && ref.getWorldUuid() != null) {
-                    World world = Universe.get().getWorld(ref.getWorldUuid());
-                    if (world != null) {
-                        return world.getName();
-                    }
-                }
+        for (RuntimeSnapshot.PlayerRow row : snapshot.players()) {
+            if (playerId.equals(row.playerId())) {
+                return row;
             }
         }
-        return "default";
-    }
-
-    private static int countOnline() {
-        Collection<PlayerRef> online = Universe.get().getPlayers();
-        return online == null ? 0 : online.size();
-    }
-
-    private static void help(CommandContext ctx) {
-        send(ctx, "QuantumHy commands", "#55FFFF");
-        send(ctx, "/q status - what QuantumHy is doing right now", "#AAAAAA");
-        send(ctx, "/q help - this list", "#AAAAAA");
-    }
-
-    private static String nameOf(PlayerRef ref) {
-        String username = ref.getUsername();
-        return username != null && !username.isBlank() ? username : String.valueOf(ref.getUuid());
+        return null;
     }
 
     private static void send(CommandContext ctx, String text, String colorHex) {

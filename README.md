@@ -8,6 +8,19 @@ QuantumHy is a server-side mod that makes your client run smoother in Hytale. It
 how much the server tells your client to draw, and it adjusts that per player depending on where
 you are.
 
+## Status
+
+Active. The current development build targets small servers and solo worlds. Runtime behavior and
+config migration are covered by unit tests, but performance numbers below remain historical captures
+from earlier releases until the current build gets a new paired client capture.
+
+## Known limitations
+
+- The server does not receive the client's FPS, so QuantumHy responds to entity density, streaming
+  backlog, visible entity pressure, and server MSPT instead.
+- `/q optimize off` disables every per-player lever for that player. Explicit server-wide admin
+  controls such as world levers, spawn pause, and global LOD still affect the whole world.
+
 ## How it actually works
 
 The Hytale client is native, so no mod can touch the renderer. What a server mod can do is decide
@@ -42,6 +55,9 @@ set `targetClientViewRadius` above 0.
 
 It also smooths how fast chunks stream to you, so moving into fresh terrain arrives spread out
 instead of in one burst that makes the client hitch. That's the `smoothChunkStreaming` keys below.
+
+Each player can use `/q optimize on|off`. The preference is stored by UUID and does not change how
+QuantumHy treats anyone else.
 
 ## Performance
 
@@ -203,11 +219,14 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | --- | --- | --- |
 | `enabled` | `true` | Turn the whole thing on or off. |
 | `verboseLog` | `false` | Log every pass with each player's density and view decision. Off on new installs. |
+| `checkForUpdates` | `true` | Notify operators or QuantumHy admins when the mod page lists a newer JAR. |
 | `tickIntervalSeconds` | `5` | How often it re-checks each player. |
 | `initialDelaySeconds` | `20` | Wait this long after start before the first pass. |
 | `targetClientViewRadius` | `0` | Hard cap in chunks. `0` means no cap, just adapt. |
 | `minClientViewRadius` | `6` | Never pull anyone below this. |
 | `maxClientViewRadius` | `32` | Ceiling for the hard cap (your own view radius still wins). |
+| `adaptiveTerrainViewEnabled` | `true` | Adapt terrain view radius during normal play. |
+| `emergencyTerrainTrimEnabled` | `true` | Allow temporary terrain trim after sustained visual pressure. |
 | `densityScanChunkRadius` | `4` | How many chunks around you it counts entities in. |
 | `densityLowPerChunk` | `1.0` | Weighted entities per chunk at or below this: you get the full radius (minus optional baseline). |
 | `densityHighPerChunk` | `4.0` | Weighted entities per chunk at or above this: you get pulled to the minimum. |
@@ -220,10 +239,10 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `densitySmoothing` | `0.4` | Smooths the density signal so a moving player's view doesn't flip-flop. Lower is smoother; `1.0` is off. |
 | `adaptEntityRadius` | `true` | Also shrink how far entities are streamed (not just chunks). The big win in mob-heavy spots. |
 | `minEntityViewBlocks` | `48` | Never stream entities closer than this, in blocks (16 blocks = 1 chunk). |
-| `entityLodAggressiveness` | `2.0` | Global entity LOD cull. `1.0` is the engine default; higher drops small/distant entities sooner. |
+| `entityLodAggressiveness` | `1.0` | Explicit global entity LOD override. `1.0` keeps the engine default. |
 | `maxEntityVerticalDistance` | `32` | Drop entities too far above/below you from the stream (caves, ceilings). `0` = off. |
 | `maxVisibleEntitiesPerPlayer` | `80` | Cap streamed entities per player in crowds (`0` = off). |
-| `holdSpawnOnLoadingChunks` | `true` | Pause environmental spawning while any player has chunks streaming to the client. |
+| `holdSpawnOnLoadingChunks` | `false` | Pause environmental spawning during a heavy client stream backlog. Global admin control. |
 | `minViewRadiusDelta` | `2` | Don't bother changing the view for tiny differences. Ramped +1 expands still apply. |
 | `maxExpandChunksPerPass` | `1` | Max chunks the client view radius may increase in one pass. |
 | `maxShrinkChunksPerPass` | `2` | Max chunks it may decrease in one pass (doubled under MSPT pressure). |
@@ -236,6 +255,11 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `smoothChunkStreaming` | `true` | Spread chunk streaming out so moving into new terrain doesn't hitch. |
 | `maxChunksPerSecond` | `128` | Cap on sections streamed per second to a managed client. `0` keeps the engine default. |
 | `maxChunksPerTick` | `8` | Cap on sections streamed per tick. `0` keeps the engine default. |
+| `streamCatchUpEnabled` | `true` | Raise the managed cap temporarily after fast travel while MSPT is healthy. |
+| `streamCatchUpIntervalMs` | `250` | Interval for the lightweight stream controller. |
+| `streamCatchUpPerSecond` | `256` | Temporary healthy catch-up cap per second. |
+| `streamCatchUpPerTick` | `12` | Temporary healthy catch-up cap per tick. |
+| `streamCatchUpHoldMs` | `1500` | Minimum time to hold catch-up after fast movement. |
 | `leanCoreTakeover` | `true` | If LeanCore is installed, take the view radius over from it (see below). |
 | `yieldToLeanCoreViewRadius` | `false` | The opposite: leave the view radius to LeanCore (see below). |
 | `pressureGovernorEnabled` | `true` | Tighten render levers when world MSPT stays high. |
@@ -245,10 +269,10 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `pressureCooldownSeconds` | `15` | How long MSPT must stay low before levers restore. |
 | `pressureDensityMultiplier` | `1.45` | Under pressure, density thresholds tighten by this factor. |
 | `pressureChunkRateMultiplier` | `0.75` | Under pressure, multiply chunk streaming caps. |
-| `pressureLodMultiplier` | `1.15` | Under pressure, extra entity LOD cull on top of `entityLodAggressiveness`. |
+| `pressureLodMultiplier` | `1.15` | Pressure multiplier used only with an explicit global LOD value above `1.0`. |
 | `pressureVerticalTrimBlocks` | `8` | Under pressure, subtract from `maxEntityVerticalDistance`. |
 | `pressureWorldLevers` | `false` | Under pressure, pause NPC spawn and block tick on the world config (restored on release). |
-| `pressureTrimClientEffects` | `true` | Under pressure, trim bloom/sunshaft client effects (restored on release). |
+| `pressureTrimClientEffects` | `false` | Under pressure, trim bloom/sunshaft client effects (restored on release). |
 | `pressureEffectScale` | `0.5` | Multiplier for client effect intensities while trimmed. |
 
 ## Running with LeanCore
@@ -285,8 +309,10 @@ pass per player.
 
 ## Commands
 
-- `/q status` (alias `/quantumhy`, `/qhy`): shows what QuantumHy is doing right now, the active
-  levers, per-player chunk load, and the last density/view decision from the adaptive pass.
+- `/q optimize on|off` (aliases `/quantumhy`, `/qhy`): persistently enable or disable per-player
+  optimization for yourself.
+- `/q status`: players see only their own mode and last decision. Admins and console see full server
+  diagnostics.
 - `/q help`: lists the commands.
 
 ## Build
@@ -297,7 +323,7 @@ You need a Hytale install (that's where `HytaleServer.jar` comes from) and JDK 2
 ./gradlew build
 ```
 
-The jar lands in `build/libs/`. Drop it in your world's `mods/` folder.
+The jar lands in `build/libs/`. Drop it in `%AppData%\Hytale\UserData\Mods\` on Windows.
 
 ## Links
 

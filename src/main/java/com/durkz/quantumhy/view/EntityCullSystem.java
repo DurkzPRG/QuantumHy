@@ -1,6 +1,7 @@
 package com.durkz.quantumhy.view;
 
 import com.durkz.quantumhy.config.QuantumHyConfig;
+import com.durkz.quantumhy.config.PlayerPreferences;
 import com.durkz.quantumhy.pressure.PressureGovernor;
 import com.durkz.quantumhy.runtime.RuntimeMetrics;
 import com.hypixel.hytale.component.ArchetypeChunk;
@@ -46,6 +47,7 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
     private static final ConcurrentHashMap<String, AtomicLong> CAP_SINCE_REPORT = new ConcurrentHashMap<>();
 
     private final QuantumHyConfig config;
+    private final PlayerPreferences preferences;
     private final ComponentType<EntityStore, EntityTrackerSystems.EntityViewer> entityViewerComponentType;
     private final ComponentType<EntityStore, PlayerRef> playerRefComponentType;
     private final ComponentType<EntityStore, TransformComponent> transformComponentType;
@@ -54,8 +56,9 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
     private final ThreadLocal<NearestScratch> nearestScratch = ThreadLocal.withInitial(NearestScratch::new);
 
     public EntityCullSystem(@Nonnull ComponentType<EntityStore, EntityTrackerSystems.EntityViewer> entityViewerComponentType,
-                            @Nonnull QuantumHyConfig config) {
+                            @Nonnull QuantumHyConfig config, @Nonnull PlayerPreferences preferences) {
         this.config = config;
+        this.preferences = preferences;
         this.entityViewerComponentType = entityViewerComponentType;
         this.playerRefComponentType = PlayerRef.getComponentType();
         this.transformComponentType = TransformComponent.getComponentType();
@@ -97,6 +100,12 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         assert viewer != null;
         final int visibleBefore = viewer.visible.size();
 
+        final PlayerRef playerRef = archetypeChunk.getComponent(index, playerRefComponentType);
+        if (playerRef != null && !preferences.isOptimizationEnabled(playerRef.getUuid())) {
+            VisualLoadRegistry.remove(playerRef.getUuid());
+            return;
+        }
+
         final World world = store.getExternalData().getWorld();
         final String worldName = world == null ? "?" : world.getName();
 
@@ -137,7 +146,6 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         if (cap > 0 && viewer.visible.size() > cap) {
             capCulled = capToNearest(viewer, position, cap, commandBuffer, worldName);
         }
-        final PlayerRef playerRef = archetypeChunk.getComponent(index, playerRefComponentType);
         if (playerRef != null && playerRef.getUuid() != null) {
             int candidates = visibleBefore + Math.max(0, viewer.lodExcludedCount);
             VisualLoadRegistry.record(playerRef.getUuid(), candidates, viewer.visible.size(), viewer.viewRadiusBlocks);
@@ -169,6 +177,13 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
     public static long drainCapSinceReport(@Nonnull String worldName) {
         AtomicLong counter = CAP_SINCE_REPORT.get(worldName);
         return counter == null ? 0L : counter.getAndSet(0L);
+    }
+
+    public static void clearSession() {
+        VERTICAL_SINCE_REPORT.clear();
+        CAP_SINCE_REPORT.clear();
+        VERTICAL_CULLED.reset();
+        CAP_CULLED.reset();
     }
 
     /** Keeps the {@code cap} nearest non-player entities, dropping the farthest ones over the cap. */

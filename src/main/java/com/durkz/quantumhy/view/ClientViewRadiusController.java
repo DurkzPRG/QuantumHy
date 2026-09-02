@@ -37,6 +37,7 @@ import javax.annotation.Nullable;
 public final class ClientViewRadiusController {
 
     private static final int ENTITY_BLOCKS_APPLY_STEP = 4;
+    static final long DENSITY_CACHE_MAX_AGE_NANOS = 15_000_000_000L;
 
     private final QuantumHyConfig config;
     private final DensityScanPlan densityScanPlan;
@@ -76,6 +77,9 @@ public final class ClientViewRadiusController {
         public String line() {
             if ("yield".equals(reason)) {
                 return name + " [yield to LeanCore]";
+            }
+            if ("opt-out".equals(reason)) {
+                return name + " [optimization disabled]";
             }
             String raw = chunks <= 0 ? "?" : String.format(Locale.ROOT, "%.1f", (double) entities / chunks);
             String chunk = "cl " + chunkCurrent
@@ -131,6 +135,9 @@ public final class ClientViewRadiusController {
         PlayerState state = stateFor(playerRef.getUuid());
         ChunkTracker tracker = playerRef.getChunkTracker();
         int chunkCurrent = player.getClientViewRadius();
+        int chunkCeiling = ceiling(state, State.CHUNK, Math.max(1, player.getViewRadius()));
+        int radiusCeiling = chunkBase(chunkCeiling);
+        int radiusMinimum = Math.min(config.minClientViewRadius, radiusCeiling);
         EntityTrackerSystems.EntityViewer viewer = config.adaptEntityRadius
                 ? store.getComponent(ref, EntityTrackerSystems.EntityViewer.getComponentType())
                 : null;
@@ -160,10 +167,12 @@ public final class ClientViewRadiusController {
             state.calmPasses = ViewAdaptPolicy.nextCalmPasses(state.calmPasses, calm);
         }
         boolean streaming = isStreaming(tracker);
+        long nowNanos = System.nanoTime();
         boolean cacheHit = state != null && state.hasDensityCache && haveChunkPos
-                && state.cacheChunkX == centerX && state.cacheChunkZ == centerZ;
+                && state.cacheChunkX == centerX && state.cacheChunkZ == centerZ
+                && densityCacheFresh(nowNanos, state.densitySampleNanos, DENSITY_CACHE_MAX_AGE_NANOS);
         boolean firstPass = state != null && !state.hasPassedOnce;
-        boolean atMin = chunkCurrent <= config.minClientViewRadius;
+        boolean atMin = chunkCurrent <= radiusMinimum;
         boolean trackerExpandOk = state != null
                 && ViewAdaptPolicy.canExpand(state.calmPasses, config.expandHysteresisPasses,
                 pass.pressured(), streaming, true, movingFast);
@@ -173,7 +182,7 @@ public final class ClientViewRadiusController {
         long densityStartNs = System.nanoTime();
         boolean densityCached = false;
         Density density;
-        if (skipScan && state != null && state.hasDensityCache) {
+        if (skipScan && cacheHit && state != null) {
             density = state.cachedDensity;
             densityCached = true;
         } else if (skipScan) {
@@ -260,13 +269,12 @@ public final class ClientViewRadiusController {
         if (state != null && state.hasAppliedFrac && frac > rawFrac + 1e-6 && !canExpand) {
             reason = "hold";
         }
-        int radiusCeiling = chunkBase(ceiling(state, State.CHUNK, Math.max(1, player.getViewRadius())));
         if ((config.adaptiveTerrainViewEnabled || config.emergencyTerrainTrimEnabled)
                 && pass.pressured() && chunkCurrent < radiusCeiling && !canExpand) {
             reason = "pressure";
         }
 
-        int chunkIdeal = scale(radiusCeiling, config.minClientViewRadius, frac);
+        int chunkIdeal = scale(radiusCeiling, radiusMinimum, frac);
         int shrinkCap = ViewAdaptPolicy.chunkShrinkCap(config.maxShrinkChunksPerPass, pass.pressured());
         int chunkTarget = ViewAdaptPolicy.rampToward(
                 chunkCurrent, chunkIdeal, config.maxExpandChunksPerPass, shrinkCap);
@@ -281,6 +289,10 @@ public final class ClientViewRadiusController {
             chunkTarget = ViewAdaptPolicy.rampToward(
                     chunkCurrent, radiusCeiling, config.maxExpandChunksPerPass, shrinkCap);
             reason = "terrain-restore";
+        }
+        if (chunkTarget < chunkCurrent
+                && !shouldApplyChunkTarget(chunkCurrent, chunkIdeal, chunkTarget, config.minViewRadiusDelta)) {
+            chunkTarget = chunkCurrent;
         }
         boolean chunkWantsWrite = terrainControlActive && chunkTarget != chunkCurrent;
         if (chunkWantsWrite && (streaming || !allowWrites)) {
@@ -327,7 +339,7 @@ public final class ClientViewRadiusController {
             int liveRadius = chunkApplied ? chunkTarget : chunkCurrent;
             if (terrainControlActive) {
                 state.lastAppliedFrac = ViewAdaptPolicy.fracFromRadius(
-                        radiusCeiling, config.minClientViewRadius, liveRadius);
+                        radiusCeiling, radiusMinimum, liveRadius);
                 state.hasAppliedFrac = true;
                 state.terrainWasControlled = chunkTarget < radiusCeiling;
             } else {
@@ -356,6 +368,29 @@ public final class ClientViewRadiusController {
         return playerId == null ? null : lastDecisions.get(playerId);
     }
 
+    @Nullable
+    public Decision observeDisabled(@Nullable PlayerRef playerRef) {
+        if (playerRef == null || !playerRef.isValid()) {
+            return null;
+        }
+        Ref<EntityStore> ref = playerRef.getReference();
+        if (ref == null) {
+            return null;
+        }
+        Store<EntityStore> store = ref.getStore();
+        Player player = store.getComponent(ref, Player.getComponentType());
+        if (player == null) {
+            return null;
+        }
+        EntityTrackerSystems.EntityViewer viewer = store.getComponent(
+                ref, EntityTrackerSystems.EntityViewer.getComponentType());
+        int entityRadius = viewer == null ? -1 : viewer.viewRadiusBlocks;
+        return new Decision(nameOf(playerRef), -1, 0, 0.0D,
+                player.getClientViewRadius(), player.getClientViewRadius(), false, false,
+                entityRadius, entityRadius, false, viewer == null ? 0 : viewer.lodExcludedCount,
+                "opt-out", 0, 0, 0.0D, false);
+    }
+
     /** Drop cached state for players no longer online, so the map can't grow without bound. */
     public void retain(Set<UUID> online) {
         players.entrySet().removeIf(entry -> {
@@ -368,6 +403,21 @@ public final class ClientViewRadiusController {
         VisualLoadRegistry.retain(online);
     }
 
+    public void forget(@Nullable UUID playerId) {
+        if (playerId == null) {
+            return;
+        }
+        players.remove(playerId);
+        lastDecisions.remove(playerId);
+        VisualLoadRegistry.remove(playerId);
+    }
+
+    public void clear() {
+        players.clear();
+        lastDecisions.clear();
+        VisualLoadRegistry.clear();
+    }
+
     /** Restore radii that QuantumHy changed before the runtime is stopped. */
     public void restoreAll(@Nullable Iterable<PlayerRef> onlinePlayers) {
         if (onlinePlayers == null) {
@@ -377,24 +427,31 @@ public final class ClientViewRadiusController {
             if (playerRef == null || !playerRef.isValid()) {
                 continue;
             }
-            UUID playerId = playerRef.getUuid();
-            PlayerState state = playerId == null ? null : players.get(playerId);
-            Ref<EntityStore> ref = playerRef.getReference();
-            if (state == null || ref == null) {
-                continue;
-            }
-            Store<EntityStore> store = ref.getStore();
-            Player player = store.getComponent(ref, Player.getComponentType());
-            if (player != null && state.chunkCeiling > 0
-                    && player.getClientViewRadius() < state.chunkCeiling) {
-                player.setClientViewRadius(state.chunkCeiling);
-            }
-            EntityTrackerSystems.EntityViewer viewer = store.getComponent(
-                    ref, EntityTrackerSystems.EntityViewer.getComponentType());
-            if (viewer != null && state.entityCeiling > 0
-                    && viewer.viewRadiusBlocks < state.entityCeiling) {
-                viewer.viewRadiusBlocks = state.entityCeiling;
-            }
+            restoreOne(playerRef);
+        }
+    }
+
+    public void restoreOne(@Nullable PlayerRef playerRef) {
+        if (playerRef == null || !playerRef.isValid()) {
+            return;
+        }
+        UUID playerId = playerRef.getUuid();
+        PlayerState state = playerId == null ? null : players.get(playerId);
+        Ref<EntityStore> ref = playerRef.getReference();
+        if (state == null || ref == null) {
+            return;
+        }
+        Store<EntityStore> store = ref.getStore();
+        Player player = store.getComponent(ref, Player.getComponentType());
+        if (player != null && state.chunkCeiling > 0
+                && player.getClientViewRadius() < state.chunkCeiling) {
+            player.setClientViewRadius(state.chunkCeiling);
+        }
+        EntityTrackerSystems.EntityViewer viewer = store.getComponent(
+                ref, EntityTrackerSystems.EntityViewer.getComponentType());
+        if (viewer != null && state.entityCeiling > 0
+                && viewer.viewRadiusBlocks < state.entityCeiling) {
+            viewer.viewRadiusBlocks = state.entityCeiling;
         }
     }
 
@@ -440,10 +497,6 @@ public final class ClientViewRadiusController {
         double playerY = transform.getPosition().y;
         int centerX = ChunkUtil.chunkCoordinate(transform.getPosition().x);
         int centerZ = ChunkUtil.chunkCoordinate(transform.getPosition().z);
-        if (state != null && state.hasDensityCache
-                && state.cacheChunkX == centerX && state.cacheChunkZ == centerZ) {
-            return state.cachedDensity;
-        }
         int maxVert = Math.max(0, config.maxEntityVerticalDistance);
 
         int rawEntities = 0;
@@ -487,6 +540,7 @@ public final class ClientViewRadiusController {
                 state.cacheChunkX = centerX;
                 state.cacheChunkZ = centerZ;
                 state.cachedDensity = sampled;
+                state.densitySampleNanos = System.nanoTime();
             } else {
                 state.hasDensityCache = false;
             }
@@ -562,12 +616,27 @@ public final class ClientViewRadiusController {
 
     /** Chunk base to ramp toward in the open: the hard cap if set, else the player's own ceiling. */
     private int chunkBase(int ceiling) {
-        if (config.targetClientViewRadius > 0) {
-            int hardMax = Math.min(config.maxClientViewRadius, ceiling);
-            return clamp(config.targetClientViewRadius, config.minClientViewRadius,
-                    Math.max(config.minClientViewRadius, hardMax));
+        return effectiveChunkBase(ceiling, config.targetClientViewRadius,
+                config.minClientViewRadius, config.maxClientViewRadius);
+    }
+
+    static int effectiveChunkBase(int ceiling, int target, int minimum, int maximum) {
+        int safeCeiling = Math.max(1, ceiling);
+        int effectiveMinimum = Math.min(Math.max(1, minimum), safeCeiling);
+        int effectiveMaximum = Math.max(effectiveMinimum, Math.min(maximum, safeCeiling));
+        return target > 0 ? clamp(target, effectiveMinimum, effectiveMaximum) : safeCeiling;
+    }
+
+    static boolean densityCacheFresh(long nowNanos, long sampledAtNanos, long maxAgeNanos) {
+        return sampledAtNanos > 0L && nowNanos >= sampledAtNanos
+                && nowNanos - sampledAtNanos < maxAgeNanos;
+    }
+
+    static boolean shouldApplyChunkTarget(int current, int ideal, int target, int minimumDelta) {
+        if (target == current) {
+            return false;
         }
-        return Math.max(config.minClientViewRadius, ceiling);
+        return target > current || current - ideal >= Math.max(1, minimumDelta);
     }
 
     private PlayerState stateFor(UUID uuid) {
@@ -635,6 +704,7 @@ public final class ClientViewRadiusController {
         boolean hasDensityCache;
         int cacheChunkX;
         int cacheChunkZ;
+        long densitySampleNanos;
         boolean hasChunkPos;
         int lastChunkX;
         int lastChunkZ;

@@ -156,6 +156,9 @@ public class QuantumCommand extends AbstractCommandCollection {
                 "terrain=%d->%d entity=%d->%d visible=%d/%d stream=%s",
                 row.terrainCurrent(), row.terrainTarget(), row.entityCurrent(), row.entityTarget(),
                 row.visualVisible(), row.visualCandidates(), row.streamTier()), "#CCCCCC");
+        send(ctx, String.format(Locale.ROOT,
+                "client: strain=%.2f loopLag=%.0fms effectsTrimmed=%d",
+                row.clientStrain(), row.clientFrameLagMs(), row.effectsDropped()), "#CCCCCC");
         send(ctx, "decision: " + row.decisionLine(), "#999999");
     }
 
@@ -201,6 +204,14 @@ public class QuantumCommand extends AbstractCommandCollection {
                 config.holdSpawnOnLoadingChunks ? "on" : "off",
                 SpawnStreamPauseSystem.POOL_COOLDOWNS.sum(), config.smoothChunkStreaming,
                 config.streamCatchUpEnabled, LeanCoreBridge.chunkRateOwnerLabel(config)), "#AAAAAA");
+        send(ctx, String.format(Locale.ROOT,
+                "client: renderCap=%s strain=%s effectBudget=%s(%d/s protect=%db soft=%db max=%s) trimmed=%d",
+                config.clientRenderCapEnabled ? "on" : "off",
+                config.clientStrainEnabled ? "on" : "off",
+                config.effectBudgetEnabled ? "on" : "off",
+                config.effectBudgetPerSecond, config.effectProtectRadius, config.effectSoftRadius,
+                config.effectMaxDistance > 0 ? config.effectMaxDistance + "b" : "off",
+                com.durkz.quantumhy.effects.EffectBudgetFilter.DROPPED.sum()), "#AAAAAA");
         send(ctx, "LeanCore: state=" + LeanCoreBridge.ownership()
                 + " view=" + LeanCoreBridge.viewRadiusOwnerLabel(config), "#AAAAAA");
         send(ctx, "online players: " + snap.onlineCount(), "#AAAAAA");
@@ -210,9 +221,10 @@ public class QuantumCommand extends AbstractCommandCollection {
         }
         for (RuntimeSnapshot.PlayerRow row : snap.players()) {
             send(ctx, String.format(Locale.ROOT,
-                    "- %s world=%s chunks=%d/%d rate=%d/%d tier=%s | %s",
+                    "- %s world=%s chunks=%d/%d rate=%d/%d tier=%s strain=%.2f lag=%.0fms fx-%d | %s",
                     row.name(), row.worldName(), row.chunksLoaded(), row.chunksLoading(),
                     row.maxChunksPerSecond(), row.maxChunksPerTick(), row.streamTier(),
+                    row.clientStrain(), row.clientFrameLagMs(), row.effectsDropped(),
                     row.decisionLine()), "#CCCCCC");
         }
     }

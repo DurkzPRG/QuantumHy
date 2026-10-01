@@ -10,6 +10,7 @@ import com.durkz.quantumhy.runtime.RuntimeSnapshot;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.update.ModUpdateChecker;
 import com.durkz.quantumhy.view.EntityCullSystem;
+import com.hypixel.hytale.protocol.packets.connection.Pong;
 import com.hypixel.hytale.protocol.packets.setup.ViewRadius;
 import com.hypixel.hytale.server.core.io.adapter.PacketAdapters;
 import com.hypixel.hytale.server.core.io.adapter.PacketFilter;
@@ -30,7 +31,8 @@ public class QuantumHyPlugin extends JavaPlugin {
     private LiveConfig liveConfig;
     private PlayerPreferences playerPreferences;
     private FpsRuntime runtime;
-    private PacketFilter viewRadiusWatcher;
+    private PacketFilter inboundWatcher;
+    private PacketFilter effectFilter;
 
     public QuantumHyPlugin(@NonNullDecl JavaPluginInit init) {
         super(init);
@@ -59,13 +61,21 @@ public class QuantumHyPlugin extends JavaPlugin {
                 new EntityCullSystem(EntityTrackerSystems.EntityViewer.getComponentType(), liveConfig,
                         playerPreferences));
 
-        if (config.clientRenderCapEnabled) {
-            FpsRuntime capRuntime = runtime;
-            viewRadiusWatcher = PacketAdapters.registerInbound((PlayerPacketWatcher) (playerRef, packet) -> {
-                if (packet instanceof ViewRadius viewRadius && playerRef != null) {
-                    capRuntime.renderCap().onClientRequest(playerRef.getUuid(), viewRadius.value);
+        if (config.clientRenderCapEnabled || config.clientStrainEnabled) {
+            FpsRuntime watched = runtime;
+            inboundWatcher = PacketAdapters.registerInbound((PlayerPacketWatcher) (playerRef, packet) -> {
+                if (playerRef == null) {
+                    return;
+                }
+                if (packet instanceof ViewRadius viewRadius) {
+                    watched.renderCap().onClientRequest(playerRef.getUuid(), viewRadius.value);
+                } else if (packet instanceof Pong pong) {
+                    watched.strain().onPong(playerRef.getUuid(), pong);
                 }
             });
+        }
+        if (config.effectBudgetEnabled) {
+            effectFilter = PacketAdapters.registerOutbound(runtime.effects());
         }
 
         if (config.holdSpawnOnLoadingChunks) {
@@ -176,12 +186,19 @@ public class QuantumHyPlugin extends JavaPlugin {
     protected void shutdown() {
         stopDevPerfMeterIfPresent();
         ModUpdateChecker.getInstance().shutdown();
-        if (viewRadiusWatcher != null) {
+        if (inboundWatcher != null) {
             try {
-                PacketAdapters.deregisterInbound(viewRadiusWatcher);
+                PacketAdapters.deregisterInbound(inboundWatcher);
             } catch (IllegalArgumentException alreadyGone) {
             }
-            viewRadiusWatcher = null;
+            inboundWatcher = null;
+        }
+        if (effectFilter != null) {
+            try {
+                PacketAdapters.deregisterOutbound(effectFilter);
+            } catch (IllegalArgumentException alreadyGone) {
+            }
+            effectFilter = null;
         }
         if (runtime != null) {
             runtime.shutdown();

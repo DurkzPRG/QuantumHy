@@ -124,6 +124,23 @@ class StreamCatchUpPolicyTest {
         assertEquals(2750L, calm.holdUntilMs());
     }
 
+    @Test
+    void strainedClientGetsProtectedRateOnHealthyServer() {
+        StreamCatchUpPolicy.Outcome out = StreamCatchUpPolicy.next(
+                true, true, false, true, 20.0D, 20.0D, ENTER, EXIT, 0.75D,
+                3, 100, 0, 0, StreamCatchUpPolicy.Tier.CRUISE, 0L, 0L,
+                BACKLOG, HOLD_MS, CRUISE_S, CRUISE_T, CATCH_S, CATCH_T,
+                BASELINE_S, BASELINE_T, true);
+        assertProtect(out, StreamCatchUpPolicy.ProtectionCause.CLIENT);
+
+        StreamCatchUpPolicy.Outcome calm = StreamCatchUpPolicy.next(
+                true, true, false, true, 20.0D, 20.0D, ENTER, EXIT, 0.75D,
+                3, 100, 0, 0, StreamCatchUpPolicy.Tier.CRUISE, 0L, 0L,
+                BACKLOG, HOLD_MS, CRUISE_S, CRUISE_T, CATCH_S, CATCH_T,
+                BASELINE_S, BASELINE_T, false);
+        assertEquals(StreamCatchUpPolicy.Tier.CATCH_UP, calm.tier());
+    }
+
     private static void assertProtect(StreamCatchUpPolicy.Outcome outcome,
             StreamCatchUpPolicy.ProtectionCause cause) {
         assertEquals(StreamCatchUpPolicy.Tier.PROTECT, outcome.tier());

@@ -14,7 +14,8 @@ public final class StreamCatchUpPolicy {
         GOVERNOR("governor"),
         LAST_TICK("last-tick"),
         AVERAGE("average"),
-        METRIC_UNAVAILABLE("metric-unavailable");
+        METRIC_UNAVAILABLE("metric-unavailable"),
+        CLIENT("client");
 
         private final String label;
 
@@ -117,10 +118,51 @@ public final class StreamCatchUpPolicy {
             int baselinePerSecond,
             int baselinePerTick
     ) {
+        return next(catchUpEnabled, pressureGovernorEnabled, governorPressured, metricAvailable,
+                msptAverage, msptLast, pressureEnter, pressureExit, pressureRateMultiplier, chebyshev,
+                loading, previousMoveScore, previousProtectCalmSamples, current, nowMs, holdUntilMs,
+                backlogThreshold, holdMs, cruisePerSecond, cruisePerTick, catchUpPerSecond,
+                catchUpPerTick, baselinePerSecond, baselinePerTick, false);
+    }
+
+    /**
+     * Same as above, plus {@code clientStrained}: a client that can't keep up gets the protected
+     * rate even on a healthy server, since the bottleneck is its own meshing.
+     */
+    public static Outcome next(
+            boolean catchUpEnabled,
+            boolean pressureGovernorEnabled,
+            boolean governorPressured,
+            boolean metricAvailable,
+            double msptAverage,
+            double msptLast,
+            double pressureEnter,
+            double pressureExit,
+            double pressureRateMultiplier,
+            int chebyshev,
+            int loading,
+            int previousMoveScore,
+            int previousProtectCalmSamples,
+            Tier current,
+            long nowMs,
+            long holdUntilMs,
+            int backlogThreshold,
+            int holdMs,
+            int cruisePerSecond,
+            int cruisePerTick,
+            int catchUpPerSecond,
+            int catchUpPerTick,
+            int baselinePerSecond,
+            int baselinePerTick,
+            boolean clientStrained
+    ) {
         int moveScore = nextMoveScore(chebyshev, previousMoveScore);
         ProtectionCause overload = overloadCause(
                 pressureGovernorEnabled, governorPressured, metricAvailable,
                 msptAverage, msptLast, pressureEnter);
+        if (overload == ProtectionCause.NONE && clientStrained) {
+            overload = ProtectionCause.CLIENT;
+        }
 
         Tier nextTier;
         long nextHold = holdUntilMs;

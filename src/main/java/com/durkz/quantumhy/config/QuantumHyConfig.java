@@ -82,6 +82,46 @@ public class QuantumHyConfig {
      */
     public boolean clientRenderCapEnabled = true;
 
+    /**
+     * Watch each client for signs it can't keep up and ease only that player's render load. The
+     * client does not report FPS, so this reads the gap between its game-loop pong and its direct
+     * pong (time the client's main loop takes to answer), the packet queue it reports, and chunk
+     * channel backpressure. A strained client gets a tighter entity and terrain radius and a gentler
+     * chunk send rate. Restart required.
+     */
+    public boolean clientStrainEnabled = true;
+
+    /** Main-loop lag (ms) where strain starts counting. About 40 FPS. */
+    public int clientStrainFrameLagLowMs = 25;
+
+    /** Main-loop lag (ms) treated as fully strained. About 16 FPS. */
+    public int clientStrainFrameLagHighMs = 60;
+
+    /** Client-reported packet queue where strain starts counting. */
+    public int clientStrainQueueLow = 64;
+
+    /** Client-reported packet queue treated as fully strained. */
+    public int clientStrainQueueHigh = 512;
+
+    /**
+     * Budget positional particles and 3D sounds sent to each player. Effects close to the player
+     * always go through; farther ones share a per-second budget, and the budget shrinks while the
+     * client is strained. Restart required.
+     */
+    public boolean effectBudgetEnabled = true;
+
+    /** Far effects (outside {@link #effectProtectRadius}) each player may receive per second. */
+    public int effectBudgetPerSecond = 120;
+
+    /** Effects within this many blocks of the player are never dropped. */
+    public int effectProtectRadius = 16;
+
+    /** Once half the budget is spent, effects beyond this many blocks are dropped first. */
+    public int effectSoftRadius = 48;
+
+    /** Hard cut-off in blocks for positional effects. {@code 0} leaves only the budget. */
+    public int effectMaxDistance = 0;
+
     /** Chunk radius scanned around each player to estimate local render cost. */
     public int densityScanChunkRadius = 4;
 
@@ -679,6 +719,30 @@ public class QuantumHyConfig {
         }
         if (pressureEffectScale <= 0 || pressureEffectScale > 1.0D) {
             pressureEffectScale = 0.5D;
+        }
+        if (clientStrainFrameLagLowMs < 1) {
+            clientStrainFrameLagLowMs = 25;
+        }
+        if (clientStrainFrameLagHighMs <= clientStrainFrameLagLowMs) {
+            clientStrainFrameLagHighMs = clientStrainFrameLagLowMs + 35;
+        }
+        if (clientStrainQueueLow < 1) {
+            clientStrainQueueLow = 64;
+        }
+        if (clientStrainQueueHigh <= clientStrainQueueLow) {
+            clientStrainQueueHigh = clientStrainQueueLow * 8;
+        }
+        if (effectBudgetPerSecond < 1) {
+            effectBudgetPerSecond = 120;
+        }
+        if (effectProtectRadius < 0) {
+            effectProtectRadius = 16;
+        }
+        if (effectSoftRadius < effectProtectRadius) {
+            effectSoftRadius = Math.max(effectProtectRadius, 48);
+        }
+        if (effectMaxDistance < 0) {
+            effectMaxDistance = 0;
         }
         if (configVersion < 0) {
             configVersion = 0;

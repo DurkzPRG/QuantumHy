@@ -1,6 +1,8 @@
 package com.durkz.quantumhy.runtime;
 
 import com.durkz.quantumhy.QuantumHyPlugin;
+import com.durkz.quantumhy.client.ClientStrainMonitor;
+import com.durkz.quantumhy.effects.EffectBudgetFilter;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.config.PlayerPreferences;
 import com.durkz.quantumhy.pressure.GlobalLodPolicy;
@@ -48,6 +50,8 @@ public final class FpsRuntime {
     private final QuantumHyConfig config;
     private final PlayerPreferences preferences;
     private final ClientRenderCap renderCap;
+    private final ClientStrainMonitor strain;
+    private final EffectBudgetFilter effects;
     private final ClientViewRadiusController controller;
     private final StreamRateController stream;
     private final PressureGovernor pressure;
@@ -57,6 +61,7 @@ public final class FpsRuntime {
     private ScheduledExecutorService scheduler;
     private ScheduledFuture<?> tickFuture;
     private ScheduledFuture<?> streamFuture;
+    private ScheduledFuture<?> strainFuture;
     private volatile boolean running;
 
     private boolean leanCoreHandled;
@@ -82,7 +87,9 @@ public final class FpsRuntime {
         this.config = config;
         this.preferences = preferences;
         this.renderCap = new ClientRenderCap(config.clientRenderCapEnabled);
-        this.controller = new ClientViewRadiusController(config, renderCap);
+        this.strain = new ClientStrainMonitor(config.clientStrainEnabled);
+        this.effects = new EffectBudgetFilter(plugin::activeConfig, preferences, strain);
+        this.controller = new ClientViewRadiusController(config, renderCap, strain);
         this.stream = new StreamRateController(config);
         this.pressure = new PressureGovernor(plugin);
         this.originalEntityLodRatio = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO;
@@ -110,6 +117,9 @@ public final class FpsRuntime {
         if (config.smoothChunkStreaming) {
             long streamMs = Math.max(50, config.streamCatchUpIntervalMs);
             streamFuture = scheduler.scheduleAtFixedRate(this::streamTick, delay * 1000L, streamMs, TimeUnit.MILLISECONDS);
+        }
+        if (strain.enabled()) {
+            strainFuture = scheduler.scheduleAtFixedRate(this::strainTick, delay * 1000L, 1000L, TimeUnit.MILLISECONDS);
         }
         plugin.getLogger().atInfo().log(
                 "QuantumHy runtime started (interval=%ds, terrainAdaptive=%s, terrainEmergency=%s, hardCap=%d, min=%d, max=%d, scan=%d, entityRadius=%s).",
@@ -206,6 +216,8 @@ public final class FpsRuntime {
             applyEntityLod();
             controller.retain(onlineScratch);
             stream.retain(onlineScratch);
+            strain.retain(onlineScratch);
+            effects.retain(onlineScratch);
             playerSnapshotScratch.keySet().retainAll(onlineScratch);
             lastOnlineCount = onlineScratch.size();
 
@@ -222,6 +234,28 @@ public final class FpsRuntime {
         } catch (RuntimeException ex) {
             plugin.getLogger().atWarning().withCause(ex)
                     .log("QuantumHy tick failed: %s", ex.getClass().getSimpleName());
+        }
+    }
+
+    /** Client strain sample, once a second. Reads only thread-safe connection state. */
+    private void strainTick() {
+        if (!running) {
+            return;
+        }
+        try {
+            Collection<PlayerRef> online = Universe.get().getPlayers();
+            if (online == null || online.isEmpty()) {
+                return;
+            }
+            QuantumHyConfig settings = plugin.activeConfig();
+            for (PlayerRef ref : online) {
+                if (ref != null && ref.isValid() && preferences.isOptimizationEnabled(ref.getUuid())) {
+                    strain.sample(ref, settings);
+                }
+            }
+        } catch (RuntimeException ex) {
+            plugin.getLogger().atWarning().withCause(ex)
+                    .log("QuantumHy client strain sample failed: %s", ex.getClass().getSimpleName());
         }
     }
 
@@ -298,7 +332,7 @@ public final class FpsRuntime {
                 }
                 controller.reassertTrim(ref);
                 StreamRateController.Transition transition = stream.applyOne(
-                        ref, health, pressureSnap.pressured(), nowMs, config);
+                        ref, health, pressureSnap.pressured(), nowMs, config, strain.strained(ref.getUuid()));
                 if (transition != null && config.verboseLog) {
                     StreamRateController.Applied applied = transition.applied();
                     plugin.getLogger().atInfo().log(
@@ -405,6 +439,16 @@ public final class FpsRuntime {
                 vertical, cap, SpawnStreamPauseSystem.POOL_COOLDOWNS.sum());
     }
 
+    /** Shared with the inbound {@code Pong} watcher registered by the plugin. */
+    public ClientStrainMonitor strain() {
+        return strain;
+    }
+
+    /** Registered by the plugin as an outbound packet filter. */
+    public EffectBudgetFilter effects() {
+        return effects;
+    }
+
     /** Shared with the inbound {@code ViewRadius} watcher registered by the plugin. */
     public ClientRenderCap renderCap() {
         return renderCap;
@@ -441,7 +485,8 @@ public final class FpsRuntime {
                 applied.loadingDelta(), applied.msptAverage(), applied.msptLast(), applied.protectionCause(),
                 decision.chunkCurrent(), decision.chunkTarget(), decision.entCurrent(), decision.entTarget(),
                 decision.visualCandidates(), decision.visualVisible(), decision.visualPressure(),
-                decision.visualEmergency(), decision));
+                decision.visualEmergency(), strain.strain(playerId), strain.frameLagMs(playerId),
+                effects.drainDropped(playerId), decision));
     }
 
     private void publishSnapshot() {
@@ -521,6 +566,8 @@ public final class FpsRuntime {
         EntityCullSystem.forget(playerId);
         controller.forget(playerId);
         stream.forget(playerId);
+        strain.forget(playerId);
+        effects.forget(playerId);
         playerSnapshotScratch.remove(playerId);
         VisualLoadRegistry.remove(playerId);
         publishSnapshot();
@@ -596,6 +643,8 @@ public final class FpsRuntime {
         pressure.releaseInactiveWorlds(Set.of(), config);
         controller.clear();
         stream.clear();
+        strain.clear();
+        effects.clear();
         playerSnapshotScratch.clear();
         worldSnapshotScratch.clear();
         streamWorldBatches.clear();
@@ -617,6 +666,10 @@ public final class FpsRuntime {
         if (streamFuture != null) {
             streamFuture.cancel(false);
             streamFuture = null;
+        }
+        if (strainFuture != null) {
+            strainFuture.cancel(false);
+            strainFuture = null;
         }
         if (scheduler != null) {
             scheduler.shutdownNow();
@@ -699,5 +752,7 @@ public final class FpsRuntime {
         pressure.clearSession();
         controller.clear();
         stream.clear();
+        strain.clear();
+        effects.clear();
     }
 }

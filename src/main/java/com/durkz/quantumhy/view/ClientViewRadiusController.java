@@ -1,5 +1,7 @@
 package com.durkz.quantumhy.view;
 
+import com.durkz.quantumhy.client.ClientStrainMonitor;
+import com.durkz.quantumhy.client.ClientStrainPolicy;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.pressure.PressureGovernor.ViewPassContext;
@@ -43,6 +45,8 @@ public final class ClientViewRadiusController {
     private final DensityScanPlan densityScanPlan;
     @Nullable
     private final ClientRenderCap renderCap;
+    @Nullable
+    private final ClientStrainMonitor strainMonitor;
     private final Map<UUID, PlayerState> players = new ConcurrentHashMap<>();
     private final Map<UUID, Decision> lastDecisions = new ConcurrentHashMap<>();
 
@@ -51,8 +55,14 @@ public final class ClientViewRadiusController {
     }
 
     public ClientViewRadiusController(QuantumHyConfig config, @Nullable ClientRenderCap renderCap) {
+        this(config, renderCap, null);
+    }
+
+    public ClientViewRadiusController(QuantumHyConfig config, @Nullable ClientRenderCap renderCap,
+                                      @Nullable ClientStrainMonitor strainMonitor) {
         this.config = config;
         this.renderCap = renderCap;
+        this.strainMonitor = strainMonitor;
         this.densityScanPlan = DensityScanPlan.of(config.densityScanChunkRadius,
                 config.densityRingWeighting, config.densityRingEdgeWeight);
     }
@@ -279,8 +289,16 @@ public final class ClientViewRadiusController {
         } else {
             rawFrac = 0.0D;
         }
+        double strain = strainMonitor == null ? 0.0D : strainMonitor.strain(playerRef.getUuid());
+        boolean clientStrained = strain > 0.0D;
+        if (clientStrained) {
+            entityRawFrac = Math.max(entityRawFrac, ClientStrainPolicy.entityFraction(strain));
+            if (config.adaptiveTerrainViewEnabled || config.emergencyTerrainTrimEnabled) {
+                rawFrac = Math.max(rawFrac, ClientStrainPolicy.terrainFraction(strain));
+            }
+        }
 
-        boolean canExpand = state != null
+        boolean canExpand = state != null && !clientStrained
                 && ViewAdaptPolicy.canExpand(state.calmPasses, config.expandHysteresisPasses,
                 pass.pressured(), streaming, sampleCovered, movingFast);
         double frac = ViewAdaptPolicy.ratchetFrac(
@@ -292,6 +310,10 @@ public final class ClientViewRadiusController {
                 ? shrinkReason(true, frac, densityFrac, chunkLoadFrac, config.baselineShrinkFraction)
                 : (visualEmergency && config.emergencyTerrainTrimEnabled
                 ? "visual-emergency" : "terrain-preserved");
+        if (clientStrained && frac > 0.0D
+                && ClientStrainPolicy.terrainFraction(strain) >= frac - 1e-6) {
+            reason = "client-strain";
+        }
         if (state != null && state.hasAppliedFrac && frac > rawFrac + 1e-6 && !canExpand) {
             reason = "hold";
         }
@@ -307,11 +329,11 @@ public final class ClientViewRadiusController {
         boolean chunkApplied = false;
         boolean chunkHeld = false;
         boolean terrainControlActive = config.adaptiveTerrainViewEnabled
-                || (config.emergencyTerrainTrimEnabled && visualEmergency)
+                || (config.emergencyTerrainTrimEnabled && (visualEmergency || clientStrained))
                 || (state != null && state.terrainWasControlled && chunkCurrent < radiusCeiling);
         if (!terrainControlActive) {
             chunkTarget = chunkCurrent;
-        } else if (!config.adaptiveTerrainViewEnabled && !visualEmergency) {
+        } else if (!config.adaptiveTerrainViewEnabled && !visualEmergency && !clientStrained) {
             chunkTarget = ViewAdaptPolicy.rampToward(
                     chunkCurrent, radiusCeiling, config.maxExpandChunksPerPass, shrinkCap);
             reason = "terrain-restore";

@@ -40,6 +40,9 @@ public record RuntimeSnapshot(
             int visualVisible,
             double visualPressure,
             boolean visualEmergency,
+            double clientStrain,
+            double clientFrameLagMs,
+            long effectsDropped,
             @Nonnull ClientViewRadiusController.Decision decision
     ) {
         /** Formatted on demand: rows are rebuilt every pass but only read by /q status. */

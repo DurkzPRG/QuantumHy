@@ -91,6 +91,13 @@ public final class StreamRateController {
     public Transition applyOne(@Nullable PlayerRef playerRef,
             @Nonnull PressureGovernor.StreamHealth health, boolean governorPressured, long nowMs,
             @Nonnull QuantumHyConfig config) {
+        return applyOne(playerRef, health, governorPressured, nowMs, config, false);
+    }
+
+    @Nullable
+    public Transition applyOne(@Nullable PlayerRef playerRef,
+            @Nonnull PressureGovernor.StreamHealth health, boolean governorPressured, long nowMs,
+            @Nonnull QuantumHyConfig config, boolean clientStrained) {
         if (playerRef == null || !playerRef.isValid()) {
             return null;
         }
@@ -153,7 +160,8 @@ public final class StreamRateController {
                 config.streamCatchUpPerSecond,
                 config.streamCatchUpPerTick,
                 state.baselinePerSecond,
-                state.baselinePerTick);
+                state.baselinePerTick,
+                clientStrained);
 
         boolean changed = false;
         if (outcome.perSecond() > 0 && tracker.getMaxSectionsPerSecond() != outcome.perSecond()) {

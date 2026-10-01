@@ -84,6 +84,13 @@ public final class StreamRateController {
     @Nullable
     public Transition applyOne(@Nullable PlayerRef playerRef,
             @Nonnull PressureGovernor.StreamHealth health, boolean governorPressured, long nowMs) {
+        return applyOne(playerRef, health, governorPressured, nowMs, config);
+    }
+
+    @Nullable
+    public Transition applyOne(@Nullable PlayerRef playerRef,
+            @Nonnull PressureGovernor.StreamHealth health, boolean governorPressured, long nowMs,
+            @Nonnull QuantumHyConfig config) {
         if (playerRef == null || !playerRef.isValid()) {
             return null;
         }

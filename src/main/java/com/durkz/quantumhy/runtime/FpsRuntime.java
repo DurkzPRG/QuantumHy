@@ -7,6 +7,7 @@ import com.durkz.quantumhy.pressure.GlobalLodPolicy;
 import com.durkz.quantumhy.pressure.PressureGovernor;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
+import com.durkz.quantumhy.view.ClientRenderCap;
 import com.durkz.quantumhy.view.ClientViewRadiusController;
 import com.durkz.quantumhy.view.EntityCullSystem;
 import com.durkz.quantumhy.view.StreamCatchUpPolicy;
@@ -46,9 +47,11 @@ public final class FpsRuntime {
     private final QuantumHyPlugin plugin;
     private final QuantumHyConfig config;
     private final PlayerPreferences preferences;
+    private final ClientRenderCap renderCap;
     private final ClientViewRadiusController controller;
     private final StreamRateController stream;
     private final PressureGovernor pressure;
+    private final OptimizationRequests optimizationRequests = new OptimizationRequests();
     private final double originalEntityLodRatio;
 
     private ScheduledExecutorService scheduler;
@@ -78,7 +81,8 @@ public final class FpsRuntime {
         this.plugin = plugin;
         this.config = config;
         this.preferences = preferences;
-        this.controller = new ClientViewRadiusController(config);
+        this.renderCap = new ClientRenderCap(config.clientRenderCapEnabled);
+        this.controller = new ClientViewRadiusController(config, renderCap);
         this.stream = new StreamRateController(config);
         this.pressure = new PressureGovernor(plugin);
         this.originalEntityLodRatio = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO;
@@ -283,6 +287,7 @@ public final class FpsRuntime {
         if (!running) {
             return;
         }
+        QuantumHyConfig config = plugin.activeConfig();
         PressureGovernor.Snapshot pressureSnap = pressure.snapshotFor(worldUuid);
         PressureGovernor.StreamHealth health = pressure.readStreamHealth(world);
         for (PlayerRef ref : batch) {
@@ -291,8 +296,9 @@ public final class FpsRuntime {
                     stream.restoreOne(ref);
                     continue;
                 }
+                controller.reassertTrim(ref);
                 StreamRateController.Transition transition = stream.applyOne(
-                        ref, health, pressureSnap.pressured(), nowMs);
+                        ref, health, pressureSnap.pressured(), nowMs, config);
                 if (transition != null && config.verboseLog) {
                     StreamRateController.Applied applied = transition.applied();
                     plugin.getLogger().atInfo().log(
@@ -313,6 +319,7 @@ public final class FpsRuntime {
         if (!running || !activeWorldIds.contains(worldUuid)) {
             return;
         }
+        QuantumHyConfig config = plugin.activeConfig();
         String worldName = world.getName();
         long pressureStartNs = System.nanoTime();
         PressureGovernor.Snapshot pressureSnap = pressure.update(world, config, config.tickIntervalSeconds);
@@ -333,7 +340,7 @@ public final class FpsRuntime {
             try {
                 ClientViewRadiusController.Decision decision;
                 if (preferences.isOptimizationEnabled(ref.getUuid())) {
-                    decision = controller.applyOne(ref, world, pass, deadlineNs);
+                    decision = controller.applyOne(ref, world, pass, deadlineNs, config);
                 } else {
                     controller.restoreOne(ref);
                     stream.restoreOne(ref);
@@ -363,7 +370,7 @@ public final class FpsRuntime {
                 SpawnStreamPauseSystem.isStreamPauseActive(worldName),
                 SpawnStreamPauseSystem.poolCooledCount(worldName)));
         publishSnapshot();
-        logActionDeltas(world, pressureSnap);
+        logActionDeltas(world, pressureSnap, config);
 
         if (details != null) {
             plugin.getLogger().atInfo().log("pass [world=%s] players=%d changed=%d: %s",
@@ -374,7 +381,8 @@ public final class FpsRuntime {
     }
 
     /** Server log summary for spawn hold, entity cull, and pressure since the last pass on this world. */
-    private void logActionDeltas(@Nonnull World world, @Nonnull PressureGovernor.Snapshot pressureSnap) {
+    private void logActionDeltas(@Nonnull World world, @Nonnull PressureGovernor.Snapshot pressureSnap,
+                                QuantumHyConfig config) {
         String worldName = world.getName();
         long poolCooldowns = SpawnStreamPauseSystem.drainCooldownsSinceReport(worldName);
         long poolReleases = SpawnStreamPauseSystem.drainReleasesSinceReport(worldName);
@@ -395,6 +403,16 @@ public final class FpsRuntime {
                 worldName, PressureGovernor.formatStatus(pressureSnap),
                 streamPause ? "on" : "off", poolCooled, poolCooldowns, poolReleases,
                 vertical, cap, SpawnStreamPauseSystem.POOL_COOLDOWNS.sum());
+    }
+
+    /** Shared with the inbound {@code ViewRadius} watcher registered by the plugin. */
+    public ClientRenderCap renderCap() {
+        return renderCap;
+    }
+
+    /** The engine re-sends the server max view radius when a player enters a world. */
+    public void onWorldJoin(UUID playerId) {
+        renderCap.onWorldJoin(playerId);
     }
 
     public PressureGovernor pressureGovernor() {
@@ -423,7 +441,7 @@ public final class FpsRuntime {
                 applied.loadingDelta(), applied.msptAverage(), applied.msptLast(), applied.protectionCause(),
                 decision.chunkCurrent(), decision.chunkTarget(), decision.entCurrent(), decision.entTarget(),
                 decision.visualCandidates(), decision.visualVisible(), decision.visualPressure(),
-                decision.visualEmergency(), decision.line()));
+                decision.visualEmergency(), decision));
     }
 
     private void publishSnapshot() {
@@ -495,6 +513,12 @@ public final class FpsRuntime {
     }
 
     public void forgetPlayer(UUID playerId) {
+        optimizationRequests.forget(playerId);
+        clearPlayerState(playerId);
+    }
+
+    private void clearPlayerState(UUID playerId) {
+        EntityCullSystem.forget(playerId);
         controller.forget(playerId);
         stream.forget(playerId);
         playerSnapshotScratch.remove(playerId);
@@ -502,25 +526,69 @@ public final class FpsRuntime {
         publishSnapshot();
     }
 
-    public void optimizationChanged(@Nonnull PlayerRef playerRef, boolean enabled) {
+    public CompletableFuture<String> optimizationChanged(@Nonnull PlayerRef playerRef, boolean enabled) {
         UUID playerId = playerRef.getUuid();
         if (playerId == null) {
-            return;
+            return CompletableFuture.completedFuture("Player session unavailable; try again after joining a world.");
         }
         UUID worldId = playerRef.getWorldUuid();
         World world = worldId == null ? null : Universe.get().getWorld(worldId);
-        if (!enabled && world != null && world.isAlive()) {
-            world.execute(() -> {
+        if (!running || world == null || !world.isAlive()) {
+            return CompletableFuture.completedFuture("World unavailable; optimization was not changed. Try again after loading.");
+        }
+        return optimizationRequests.submit(playerId, enabled, world::execute, requested -> {
+            if (!running || !playerRef.isValid() || !world.isAlive()
+                    || !worldId.equals(playerRef.getWorldUuid()) || playerRef.getReference() == null
+                    || !playerRef.getReference().isValid()) {
+                return "Player world changed or stopped; optimization was not changed. Retry in your current world.";
+            }
+            boolean changed = preferences.setOptimizationEnabled(playerId, requested);
+            String reply;
+            if (!requested) {
                 controller.restoreOne(playerRef);
                 stream.restoreOne(playerRef);
-                forgetPlayer(playerId);
-            });
-            return;
-        }
-        forgetPlayer(playerId);
+                clearPlayerState(playerId);
+                reply = changed ? "Optimization disabled. Personal radius and streaming limits restored."
+                        : "Optimization was already disabled. Personal limits checked and restored.";
+            } else {
+                QuantumHyConfig settings = plugin.activeConfig();
+                PressureGovernor.Snapshot pressureSnap = pressure.snapshotFor(worldId);
+                PressureGovernor.ViewPassContext pass = pressure.viewContext(settings, pressureSnap);
+                long deadline = settings.worldPassBudgetMs <= 0 ? Long.MAX_VALUE
+                        : System.nanoTime() + settings.worldPassBudgetMs * 1_000_000L;
+                ClientViewRadiusController.Decision decision = controller.applyOne(
+                        playerRef, world, pass, deadline, settings);
+                stream.applyOne(playerRef, pressure.readStreamHealth(world), pressureSnap.pressured(),
+                        System.currentTimeMillis(), settings);
+                String prefix = changed ? "Optimization enabled. " : "Optimization was already enabled. ";
+                if (decision == null) {
+                    reply = prefix + "Waiting for player data; automatic checks will retry.";
+                } else {
+                    publishPlayerRow(playerRef, world.getName(), decision);
+                    publishSnapshot();
+                    if (decision.chunkHeld()) {
+                        ChunkTracker tracker = playerRef.getChunkTracker();
+                        boolean streaming = settings.respectStreamingGrace && tracker != null
+                                && tracker.getLoadingSectionsCount() >= settings.streamingBacklogThreshold;
+                        reply = prefix + (streaming ? "Radius changes are waiting for chunk loading."
+                                : "Radius changes are waiting for the next world budget.");
+                    } else if ("yield".equals(decision.reason())) {
+                        reply = prefix + "Radius control is currently yielded to LeanCore.";
+                    } else if (decision.applied()) {
+                        reply = prefix + "Radius adjustment applied; automatic adaptation continues.";
+                    } else {
+                        reply = prefix + "Rechecked current limits; no radius change applied this pass.";
+                    }
+                }
+            }
+            plugin.getLogger().atInfo().log("optimize [player=%s requested=%s changed=%s]: %s",
+                    playerRef.getUsername(), requested, changed, reply);
+            return reply;
+        });
     }
 
     private void clearOnlineState() {
+        EntityCullSystem.clearSession();
         onlineScratch.clear();
         worldScratch.clear();
         activeWorldIds = Set.of();
@@ -537,6 +605,7 @@ public final class FpsRuntime {
     }
 
     public synchronized void shutdown() {
+        optimizationRequests.close();
         if (!running && scheduler == null) {
             return;
         }

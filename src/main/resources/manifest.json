@@ -9,7 +9,7 @@
         }
     ],
     "Website": "https://github.com/DurkzPRG/QuantumHy",
-    "ServerVersion": ">=0.6.0",
+    "ServerVersion": ">=0.7.0",
     "OptionalDependencies": {
         "durkz:LeanCore": "*"
     },

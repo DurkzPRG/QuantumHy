@@ -4,6 +4,7 @@ import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.config.PlayerPreferences;
 import com.durkz.quantumhy.pressure.PressureGovernor;
 import com.durkz.quantumhy.runtime.RuntimeMetrics;
+import com.hypixel.hytale.builtin.mounts.MountedComponent;
 import com.hypixel.hytale.component.ArchetypeChunk;
 import com.hypixel.hytale.component.CommandBuffer;
 import com.hypixel.hytale.component.ComponentType;
@@ -15,6 +16,9 @@ import com.hypixel.hytale.component.dependency.Order;
 import com.hypixel.hytale.component.dependency.SystemDependency;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.tick.EntityTickingSystem;
+import com.hypixel.hytale.protocol.InteractionState;
+import com.hypixel.hytale.server.core.entity.InteractionManager;
+import com.hypixel.hytale.server.core.modules.interaction.InteractionModule;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
@@ -25,49 +29,48 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.Supplier;
 
-/**
- * Trims each player's set of streamed entities after the engine has collected it, the same way the
- * built-in LOD cull does. The engine sends every entity inside the entity radius as a plain sphere
- * with no line of sight, so mobs deep in caves below you (or far overhead) still get sent and drawn
- * through the terrain. This drops anything too far above or below the viewer, and optionally caps the
- * total count so a player in a crowd only gets the nearest entities. Other players are never trimmed.
- */
+/** Trims engine candidates with stable distance selection and narrowly scoped gameplay protection. */
 public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
-
     public static final LongAdder VERTICAL_CULLED = new LongAdder();
     public static final LongAdder CAP_CULLED = new LongAdder();
 
     private static final ConcurrentHashMap<String, AtomicLong> VERTICAL_SINCE_REPORT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, AtomicLong> CAP_SINCE_REPORT = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<UUID, StableEntitySelection<Ref<EntityStore>>> SELECTIONS =
+            new ConcurrentHashMap<>();
 
-    private final QuantumHyConfig config;
+    private final Supplier<QuantumHyConfig> settings;
     private final PlayerPreferences preferences;
     private final ComponentType<EntityStore, EntityTrackerSystems.EntityViewer> entityViewerComponentType;
     private final ComponentType<EntityStore, PlayerRef> playerRefComponentType;
     private final ComponentType<EntityStore, TransformComponent> transformComponentType;
+    private final ComponentType<EntityStore, MountedComponent> mountedComponentType;
+    private final ComponentType<EntityStore, InteractionManager> interactionManagerComponentType;
     private final Query<EntityStore> query;
     private final Set<Dependency<EntityStore>> dependencies;
-    private final ThreadLocal<NearestScratch> nearestScratch = ThreadLocal.withInitial(NearestScratch::new);
 
-    public EntityCullSystem(@Nonnull ComponentType<EntityStore, EntityTrackerSystems.EntityViewer> entityViewerComponentType,
-                            @Nonnull QuantumHyConfig config, @Nonnull PlayerPreferences preferences) {
-        this.config = config;
+    public EntityCullSystem(@Nonnull ComponentType<EntityStore, EntityTrackerSystems.EntityViewer> viewerType,
+                            @Nonnull Supplier<QuantumHyConfig> settings, @Nonnull PlayerPreferences preferences) {
+        this.settings = settings;
         this.preferences = preferences;
-        this.entityViewerComponentType = entityViewerComponentType;
+        this.entityViewerComponentType = viewerType;
         this.playerRefComponentType = PlayerRef.getComponentType();
         this.transformComponentType = TransformComponent.getComponentType();
-        this.query = Query.and(entityViewerComponentType, TransformComponent.getComponentType());
-        Set<Dependency<EntityStore>> orderedAfterEngine = new HashSet<>(3);
-        orderedAfterEngine.add(new SystemDependency<>(Order.AFTER, EntityTrackerSystems.CollectVisible.class));
-        orderedAfterEngine.add(new SystemDependency<>(Order.AFTER, EntityTrackerSystems.LODCull.class));
-        orderedAfterEngine.add(new SystemDependency<>(Order.AFTER, EntityTrackerSystems.HideFromPlayer.class));
-        this.dependencies = Collections.unmodifiableSet(orderedAfterEngine);
+        this.mountedComponentType = MountedComponent.getComponentType();
+        this.interactionManagerComponentType = InteractionModule.get().getInteractionManagerComponent();
+        this.query = Query.and(viewerType, transformComponentType, playerRefComponentType);
+        Set<Dependency<EntityStore>> ordered = new HashSet<>(3);
+        ordered.add(new SystemDependency<>(Order.AFTER, EntityTrackerSystems.CollectVisible.class));
+        ordered.add(new SystemDependency<>(Order.AFTER, EntityTrackerSystems.LODCull.class));
+        ordered.add(new SystemDependency<>(Order.AFTER, EntityTrackerSystems.HideFromPlayer.class));
+        this.dependencies = Collections.unmodifiableSet(ordered);
     }
 
     @Nullable
@@ -96,77 +99,119 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
     public void tick(float dt, int index, @Nonnull ArchetypeChunk<EntityStore> archetypeChunk,
                      @Nonnull Store<EntityStore> store, @Nonnull CommandBuffer<EntityStore> commandBuffer) {
         final long startNs = System.nanoTime();
+        final QuantumHyConfig config = settings.get();
         final var viewer = archetypeChunk.getComponent(index, entityViewerComponentType);
-        assert viewer != null;
-        final int visibleBefore = viewer.visible.size();
-
         final PlayerRef playerRef = archetypeChunk.getComponent(index, playerRefComponentType);
-        if (playerRef != null && !preferences.isOptimizationEnabled(playerRef.getUuid())) {
-            VisualLoadRegistry.remove(playerRef.getUuid());
+        if (viewer == null || playerRef == null || playerRef.getUuid() == null) {
             return;
         }
-
+        final UUID playerId = playerRef.getUuid();
+        if (!config.enabled || !preferences.isOptimizationEnabled(playerId)) {
+            forget(playerId);
+            VisualLoadRegistry.remove(playerId);
+            return;
+        }
         final World world = store.getExternalData().getWorld();
-        final String worldName = world == null ? "?" : world.getName();
+        if (world == null || !world.getWorldConfig().getUuid().equals(playerRef.getWorldUuid())) {
+            return;
+        }
+        final String worldName = world.getName();
+        final var transform = archetypeChunk.getComponent(index, transformComponentType);
+        if (transform == null) {
+            return;
+        }
+        final var position = transform.getPosition();
+        final int visibleBefore = viewer.visible.size();
+        StableEntitySelection<Ref<EntityStore>> selection =
+                SELECTIONS.computeIfAbsent(playerId, ignored -> new StableEntitySelection<>());
+        selection.begin(playerRef.getWorldUuid(), config);
 
-        final var transformComponent = archetypeChunk.getComponent(index, TransformComponent.getComponentType());
-        assert transformComponent != null;
-        final var position = transformComponent.getPosition();
-        final double py = position.y;
-
-        final int maxVertical = PressureGovernor.verticalDistance(worldName, config.maxEntityVerticalDistance);
-        int verticalCulled = 0;
-        if (maxVertical > 0 && !viewer.visible.isEmpty()) {
-            final int maxVerticalSq = maxVertical * maxVertical;
-            for (final var iterator = viewer.visible.iterator(); iterator.hasNext(); ) {
-                final Ref<EntityStore> targetRef = iterator.next();
-                if (!targetRef.isValid()) {
+        MountedComponent mounted = archetypeChunk.getComponent(index, mountedComponentType);
+        Ref<EntityStore> mount = mounted == null ? null : mounted.getMountedToEntity();
+        if (validCandidate(mount, viewer, store)) {
+            selection.protectMount(mount);
+        }
+        InteractionManager manager = archetypeChunk.getComponent(index, interactionManagerComponentType);
+        if (manager != null) {
+            for (var chain : manager.getChains().values()) {
+                if (chain.getServerState() != InteractionState.NotFinished || chain.isPredicted()) {
                     continue;
                 }
-                if (commandBuffer.getArchetype(targetRef).contains(playerRefComponentType)) {
+                var context = chain.getContext();
+                Ref<EntityStore> target = context == null ? null : context.getTargetEntity();
+                if (!validCandidate(target, viewer, store)) {
                     continue;
                 }
-
-                final var targetTransform = commandBuffer.getComponent(targetRef, transformComponentType);
-                if (targetTransform == null) {
-                    continue;
-                }
-
-                final double dy = targetTransform.getPosition().y - py;
-                if (dy * dy > maxVerticalSq) {
-                    iterator.remove();
-                    verticalCulled++;
+                var targetTransform = commandBuffer.getComponent(target, transformComponentType);
+                if (targetTransform != null) {
+                    selection.considerInteraction(target, targetTransform.getPosition().distanceSquared(position));
                 }
             }
-            recordVerticalCull(worldName, verticalCulled);
         }
 
-        final int cap = config.maxVisibleEntitiesPerPlayer;
-        int capCulled = 0;
-        if (cap > 0 && viewer.visible.size() > cap) {
-            capCulled = capToNearest(viewer, position, cap, commandBuffer, worldName);
+        int verticalCulled = 0;
+        boolean capEnabled = config.maxVisibleEntitiesPerPlayer > 0;
+        int maxVertical = PressureGovernor.verticalDistance(playerRef.getWorldUuid(), config);
+        for (var iterator = viewer.visible.iterator(); iterator.hasNext();) {
+            Ref<EntityStore> ref = iterator.next();
+            if (!ref.isValid() || ref.getStore() != store) {
+                iterator.remove();
+                continue;
+            }
+            if (commandBuffer.getArchetype(ref).contains(playerRefComponentType)) {
+                continue;
+            }
+            var targetTransform = commandBuffer.getComponent(ref, transformComponentType);
+            if (targetTransform != null
+                    && selection.excludeVertically(ref, targetTransform.getPosition().y - position.y, maxVertical)) {
+                iterator.remove();
+                verticalCulled++;
+                continue;
+            }
+            if (capEnabled) {
+                selection.stashCandidate(ref, targetTransform == null ? Double.POSITIVE_INFINITY
+                        : targetTransform.getPosition().distanceSquared(position));
+            }
         }
-        if (playerRef != null && playerRef.getUuid() != null) {
-            int candidates = visibleBefore + Math.max(0, viewer.lodExcludedCount);
-            VisualLoadRegistry.record(playerRef.getUuid(), candidates, viewer.visible.size(), viewer.viewRadiusBlocks);
-        }
+        recordCull(worldName, verticalCulled, VERTICAL_CULLED, VERTICAL_SINCE_REPORT);
+        int capCulled = capEnabled ? capToNearest(viewer, config.maxVisibleEntitiesPerPlayer, selection) : 0;
+        recordCull(worldName, capCulled, CAP_CULLED, CAP_SINCE_REPORT);
+        selection.finish(viewer.visible);
+        int candidates = visibleBefore + Math.max(0, viewer.lodExcludedCount);
+        VisualLoadRegistry.record(playerId, candidates, viewer.visible.size(), viewer.viewRadiusBlocks,
+                selection.entered(), selection.exited());
         RuntimeMetrics.cull(System.nanoTime() - startNs, visibleBefore, verticalCulled, capCulled);
     }
 
-    private static void recordVerticalCull(@Nonnull String worldName, int count) {
-        if (count <= 0) {
-            return;
-        }
-        VERTICAL_CULLED.add(count);
-        VERTICAL_SINCE_REPORT.computeIfAbsent(worldName, ignored -> new AtomicLong()).addAndGet(count);
+    private static boolean validCandidate(Ref<EntityStore> ref, EntityTrackerSystems.EntityViewer viewer,
+                                          Store<EntityStore> store) {
+        return ref != null && ref.isValid() && ref.getStore() == store && viewer.visible.contains(ref);
     }
 
-    private static void recordCapCull(@Nonnull String worldName, int count) {
-        if (count <= 0) {
-            return;
+    /**
+     * Keeps the nearest {@code cap} non-player entities. Candidates and their distances were stashed
+     * by the vertical pass, so this is one heap pass plus one identity-set removal.
+     */
+    private static int capToNearest(EntityTrackerSystems.EntityViewer viewer, int cap,
+                                    StableEntitySelection<Ref<EntityStore>> selection) {
+        if (viewer.visible.size() <= cap) {
+            return 0;
         }
-        CAP_CULLED.add(count);
-        CAP_SINCE_REPORT.computeIfAbsent(worldName, ignored -> new AtomicLong()).addAndGet(count);
+        Set<Ref<EntityStore>> drops = selection.selectCapDrops(cap);
+        if (drops.isEmpty()) {
+            return 0;
+        }
+        int before = viewer.visible.size();
+        viewer.visible.removeIf(drops::contains);
+        return before - viewer.visible.size();
+    }
+
+    private static void recordCull(String worldName, int count, LongAdder total,
+                                   ConcurrentHashMap<String, AtomicLong> reports) {
+        if (count > 0) {
+            total.add(count);
+            reports.computeIfAbsent(worldName, ignored -> new AtomicLong()).addAndGet(count);
+        }
     }
 
     public static long drainVerticalSinceReport(@Nonnull String worldName) {
@@ -179,165 +224,21 @@ public final class EntityCullSystem extends EntityTickingSystem<EntityStore> {
         return counter == null ? 0L : counter.getAndSet(0L);
     }
 
+    public static void forget(UUID playerId) {
+        if (playerId != null) {
+            SELECTIONS.remove(playerId);
+        }
+    }
+
+    public static void retain(Set<UUID> online) {
+        SELECTIONS.keySet().retainAll(online);
+    }
+
     public static void clearSession() {
+        SELECTIONS.clear();
         VERTICAL_SINCE_REPORT.clear();
         CAP_SINCE_REPORT.clear();
         VERTICAL_CULLED.reset();
         CAP_CULLED.reset();
-    }
-
-    /** Keeps the {@code cap} nearest non-player entities, dropping the farthest ones over the cap. */
-    private int capToNearest(@Nonnull EntityTrackerSystems.EntityViewer viewer, @Nonnull org.joml.Vector3d position,
-                              int cap, @Nonnull CommandBuffer<EntityStore> commandBuffer, @Nonnull String worldName) {
-        int eligible = 0;
-        for (final Ref<EntityStore> ref : viewer.visible) {
-            if (ref.isValid() && !commandBuffer.getArchetype(ref).contains(playerRefComponentType)
-                    && commandBuffer.getComponent(ref, transformComponentType) != null) {
-                eligible++;
-            }
-        }
-        int over = eligible - cap;
-        if (over <= 0) {
-            return 0;
-        }
-
-        // Track whichever side is smaller: the nearest cap or the farthest overflow.
-        NearestScratch nearest = nearestScratch.get();
-        boolean keepNearest = cap <= over;
-        nearest.reset(Math.min(cap, over), keepNearest);
-        for (final Ref<EntityStore> ref : viewer.visible) {
-            if (!ref.isValid() || commandBuffer.getArchetype(ref).contains(playerRefComponentType)) {
-                continue;
-            }
-            final var targetTransform = commandBuffer.getComponent(ref, transformComponentType);
-            if (targetTransform == null) {
-                continue;
-            }
-            double distSq = targetTransform.getPosition().distanceSquared(position);
-            nearest.offer(ref, distSq);
-        }
-        if (nearest.isEmpty()) {
-            return 0;
-        }
-
-        nearest.buildSelectedSet();
-
-        int culled = 0;
-        for (final var iterator = viewer.visible.iterator(); iterator.hasNext(); ) {
-            final Ref<EntityStore> ref = iterator.next();
-            if (!ref.isValid() || commandBuffer.getArchetype(ref).contains(playerRefComponentType)) {
-                continue;
-            }
-            boolean selected = nearest.selected(ref);
-            if ((keepNearest && !selected) || (!keepNearest && selected)) {
-                iterator.remove();
-                culled++;
-            }
-        }
-        recordCapCull(worldName, culled);
-        nearest.clear();
-        return culled;
-    }
-
-    /** Allocation-free max heap and identity keep set, reused once per worker thread. */
-    private static final class NearestScratch {
-        private Object[] refs = new Object[0];
-        private double[] distances = new double[0];
-        private final IdentityHashMap<Object, Boolean> keep = new IdentityHashMap<>();
-        private int size;
-        private int capacity;
-        private boolean maxHeap;
-
-        void reset(int requestedCapacity, boolean keepNearest) {
-            if (refs.length < requestedCapacity) {
-                int newCapacity = Math.max(requestedCapacity, refs.length * 2 + 8);
-                refs = new Object[newCapacity];
-                distances = new double[newCapacity];
-            }
-            size = 0;
-            capacity = requestedCapacity;
-            maxHeap = keepNearest;
-            keep.clear();
-        }
-
-        void offer(Ref<EntityStore> ref, double distanceSq) {
-            if (size < capacity) {
-                int index = size++;
-                refs[index] = ref;
-                distances[index] = distanceSq;
-                siftUp(index);
-            } else if ((maxHeap && distanceSq < distances[0])
-                    || (!maxHeap && distanceSq > distances[0])) {
-                refs[0] = ref;
-                distances[0] = distanceSq;
-                siftDown(0);
-            }
-        }
-
-        boolean isEmpty() {
-            return size == 0;
-        }
-
-        void buildSelectedSet() {
-            for (int i = 0; i < size; i++) {
-                keep.put(refs[i], Boolean.TRUE);
-            }
-        }
-
-        boolean selected(Ref<EntityStore> ref) {
-            return keep.containsKey(ref);
-        }
-
-        void clear() {
-            for (int i = 0; i < size; i++) {
-                refs[i] = null;
-            }
-            size = 0;
-            keep.clear();
-        }
-
-        private void siftUp(int index) {
-            while (index > 0) {
-                int parent = (index - 1) >>> 1;
-                if (ordered(distances[parent], distances[index])) {
-                    return;
-                }
-                swap(parent, index);
-                index = parent;
-            }
-        }
-
-        private void siftDown(int index) {
-            int half = size >>> 1;
-            while (index < half) {
-                int child = (index << 1) + 1;
-                int right = child + 1;
-                if (right < size && preferred(distances[right], distances[child])) {
-                    child = right;
-                }
-                if (ordered(distances[index], distances[child])) {
-                    return;
-                }
-                swap(index, child);
-                index = child;
-            }
-        }
-
-        private boolean ordered(double parent, double child) {
-            return maxHeap ? parent >= child : parent <= child;
-        }
-
-        private boolean preferred(double candidate, double current) {
-            return maxHeap ? candidate > current : candidate < current;
-        }
-
-        private void swap(int a, int b) {
-            Object ref = refs[a];
-            refs[a] = refs[b];
-            refs[b] = ref;
-            double distance = distances[a];
-            distances[a] = distances[b];
-            distances[b] = distance;
-        }
     }
 }

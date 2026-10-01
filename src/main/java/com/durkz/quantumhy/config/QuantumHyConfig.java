@@ -74,6 +74,14 @@ public class QuantumHyConfig {
      */
     public boolean emergencyTerrainTrimEnabled = true;
 
+    /**
+     * When QuantumHy trims a player's terrain radius, also cap the client's own render distance to
+     * match (the same {@code ViewRadius} packet the server sends on join). Without it the client
+     * keeps fog and draw distance at its own setting. Released back to the server max when the trim
+     * ends, on opt-out, and on shutdown. Restart required.
+     */
+    public boolean clientRenderCapEnabled = true;
+
     /** Chunk radius scanned around each player to estimate local render cost. */
     public int densityScanChunkRadius = 4;
 
@@ -551,7 +559,7 @@ public class QuantumHyConfig {
         return Double.isFinite(a) && Math.abs(a - b) < 1e-9;
     }
 
-    private void applyDefaults() {
+    void applyDefaults() {
         if (tickIntervalSeconds <= 0) {
             tickIntervalSeconds = 5;
         }

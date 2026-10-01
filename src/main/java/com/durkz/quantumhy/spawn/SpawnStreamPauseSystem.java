@@ -25,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.Supplier;
 
 /**
  * Pauses environmental spawning while any player has a heavy section-stream backlog.
@@ -48,15 +49,21 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
     private static final ConcurrentHashMap<String, AtomicLong> RELEASES_SINCE_REPORT = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, AtomicBoolean> STREAM_PAUSE_ACTIVE = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, LongOpenHashSet> COOLED_BY_WORLD = new ConcurrentHashMap<>();
+    /** Per-world tick buffers, reused so a held pause allocates nothing per tick. World-thread owned. */
+    private static final ConcurrentHashMap<String, TickScratch> SCRATCH_BY_WORLD = new ConcurrentHashMap<>();
 
-    private final QuantumHyConfig config;
+    private final Supplier<QuantumHyConfig> settings;
     private final HytaleLogger logger;
     private final ComponentType<ChunkStore, ChunkSpawnData> chunkSpawnDataType;
     private final ComponentType<ChunkStore, WorldChunk> worldChunkType;
     private final Set<Dependency<ChunkStore>> dependencies;
 
     public SpawnStreamPauseSystem(@Nonnull QuantumHyConfig config, @Nonnull HytaleLogger logger) {
-        this.config = config;
+        this(() -> config, logger);
+    }
+
+    public SpawnStreamPauseSystem(@Nonnull Supplier<QuantumHyConfig> settings, @Nonnull HytaleLogger logger) {
+        this.settings = settings;
         this.logger = logger;
         this.chunkSpawnDataType = ChunkSpawnData.getComponentType();
         this.worldChunkType = WorldChunk.getComponentType();
@@ -72,6 +79,7 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
 
     @Override
     public void tick(float dt, int index, @Nonnull Store<ChunkStore> store) {
+        QuantumHyConfig config = settings.get();
         if (!config.enabled || !config.holdSpawnOnLoadingChunks) {
             return;
         }
@@ -86,7 +94,7 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
         boolean streaming = SpawnChunkPending.anyViewerBacklogged(world, config.streamingBacklogThreshold);
 
         if (!streaming) {
-            STREAM_PAUSE_ACTIVE.put(worldName, new AtomicBoolean(false));
+            pauseFlag(worldName).set(false);
             if (wasCooled.isEmpty()) {
                 return;
             }
@@ -100,8 +108,11 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
             return;
         }
 
-        STREAM_PAUSE_ACTIVE.put(worldName, new AtomicBoolean(true));
-        LongOpenHashSet poolChunks = collectSpawnPoolChunkIndexes(world, store);
+        pauseFlag(worldName).set(true);
+        TickScratch scratch = SCRATCH_BY_WORLD.computeIfAbsent(worldName, ignored -> new TickScratch());
+        LongOpenHashSet poolChunks = scratch.poolChunks;
+        poolChunks.clear();
+        collectSpawnPoolChunkIndexes(world, store, poolChunks);
         boolean wasAlreadyPaused = !wasCooled.isEmpty();
 
         for (long chunkIndex : wasCooled) {
@@ -113,7 +124,8 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
             }
         }
 
-        LongOpenHashSet cooledNow = new LongOpenHashSet();
+        LongOpenHashSet cooledNow = scratch.cooledNow;
+        cooledNow.clear();
         for (long chunkIndex : poolChunks) {
             if (applyCooldown(store, chunkIndex)) {
                 cooledNow.add(chunkIndex);
@@ -132,12 +144,15 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
         wasCooled.addAll(cooledNow);
     }
 
-    @Nonnull
-    private LongOpenHashSet collectSpawnPoolChunkIndexes(@Nonnull World world, @Nonnull Store<ChunkStore> store) {
-        LongOpenHashSet indexes = new LongOpenHashSet();
+    private static AtomicBoolean pauseFlag(@Nonnull String worldName) {
+        return STREAM_PAUSE_ACTIVE.computeIfAbsent(worldName, ignored -> new AtomicBoolean());
+    }
+
+    private void collectSpawnPoolChunkIndexes(@Nonnull World world, @Nonnull Store<ChunkStore> store,
+                                              @Nonnull LongOpenHashSet indexes) {
         WorldSpawnData worldSpawnData = world.getEntityStore().getStore().getResource(WorldSpawnData.getResourceType());
         if (worldSpawnData == null) {
-            return indexes;
+            return;
         }
         worldSpawnData.forEachEnvironmentSpawnData(envData -> {
             for (Ref<ChunkStore> chunkRef : envData.getChunkRefList()) {
@@ -150,7 +165,6 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
                 }
             }
         });
-        return indexes;
     }
 
     private boolean applyCooldown(@Nonnull Store<ChunkStore> store, long chunkIndex) {
@@ -199,11 +213,17 @@ public final class SpawnStreamPauseSystem extends TickingSystem<ChunkStore> {
         return counter == null ? 0L : counter.getAndSet(0L);
     }
 
+    private static final class TickScratch {
+        final LongOpenHashSet poolChunks = new LongOpenHashSet();
+        final LongOpenHashSet cooledNow = new LongOpenHashSet();
+    }
+
     public static void clearSession() {
         COOLDOWNS_SINCE_REPORT.clear();
         RELEASES_SINCE_REPORT.clear();
         STREAM_PAUSE_ACTIVE.clear();
         COOLED_BY_WORLD.clear();
+        SCRATCH_BY_WORLD.clear();
         POOL_COOLDOWNS.reset();
         POOL_RELEASES.reset();
     }

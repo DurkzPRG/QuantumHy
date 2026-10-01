@@ -16,7 +16,8 @@ public final class VisualLoadRegistry {
     private VisualLoadRegistry() {
     }
 
-    static void record(UUID playerId, int candidates, int visible, int entityRadiusBlocks) {
+    static void record(UUID playerId, int candidates, int visible, int entityRadiusBlocks,
+                       long entered, long exited) {
         if (playerId == null) {
             return;
         }
@@ -31,6 +32,8 @@ public final class VisualLoadRegistry {
             state.hasSample = true;
         }
         state.samplesSinceRead++;
+        state.enteredSinceRead += entered;
+        state.exitedSinceRead += exited;
     }
 
     @Nullable
@@ -56,8 +59,10 @@ public final class VisualLoadRegistry {
         private volatile int candidates;
         private volatile int visible;
         private volatile int entityRadiusBlocks;
-        private int churnSinceSample;
+        private long churnSinceSample;
         private int samplesSinceRead;
+        private long enteredSinceRead;
+        private long exitedSinceRead;
         private boolean hasSample;
 
         private State() {
@@ -76,11 +81,22 @@ public final class VisualLoadRegistry {
         }
 
         public double drainAverageChurn() {
-            int value = churnSinceSample;
+            long value = churnSinceSample;
             int samples = samplesSinceRead;
             churnSinceSample = 0;
             samplesSinceRead = 0;
             return samples <= 0 ? 0.0D : value / (double) samples;
         }
+
+        public SelectionChanges drainSelectionChanges() {
+            SelectionChanges changes = new SelectionChanges(enteredSinceRead, exitedSinceRead);
+            enteredSinceRead = 0;
+            exitedSinceRead = 0;
+            return changes;
+        }
+    }
+
+    public record SelectionChanges(long entered, long exited) {
+        public static final SelectionChanges NONE = new SelectionChanges(0, 0);
     }
 }

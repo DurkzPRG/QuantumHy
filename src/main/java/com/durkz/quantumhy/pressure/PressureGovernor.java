@@ -195,6 +195,15 @@ public final class PressureGovernor {
         return effective == null ? configDefault : effective;
     }
 
+    /** Combine the current reload snapshot with the world's pressure tier without a stale radius cache. */
+    public static int verticalDistance(@Nonnull UUID worldId, @Nonnull QuantumHyConfig config) {
+        PressureGovernor governor = active;
+        WorldState state = governor == null ? null : governor.worlds.get(worldId);
+        int base = config.maxEntityVerticalDistance;
+        return base > 0 && state != null && state.tier == Tier.PRESSURED
+                ? Math.max(0, base - config.pressureVerticalTrimBlocks) : base;
+    }
+
     @Nonnull
     public Snapshot snapshotFor(@Nullable UUID worldId) {
         if (worldId == null) {

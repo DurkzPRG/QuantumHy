@@ -1,6 +1,7 @@
 package com.durkz.quantumhy.runtime;
 
 import com.durkz.quantumhy.pressure.PressureGovernor;
+import com.durkz.quantumhy.view.ClientViewRadiusController;
 
 import javax.annotation.Nonnull;
 import java.util.Collections;
@@ -39,8 +40,13 @@ public record RuntimeSnapshot(
             int visualVisible,
             double visualPressure,
             boolean visualEmergency,
-            @Nonnull String decisionLine
+            @Nonnull ClientViewRadiusController.Decision decision
     ) {
+        /** Formatted on demand: rows are rebuilt every pass but only read by /q status. */
+        @Nonnull
+        public String decisionLine() {
+            return decision.line();
+        }
     }
 
     public record WorldRow(

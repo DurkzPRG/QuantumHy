@@ -22,24 +22,23 @@ import java.util.UUID;
 
 public class QuantumCommand extends AbstractCommandCollection {
 
-    public QuantumCommand(QuantumHyConfig config, QuantumHyPlugin plugin) {
+    public QuantumCommand(QuantumHyPlugin plugin) {
         super("quantumhy", "QuantumHy controls and diagnostics");
         requireNoPermission();
         addAliases("q", "qhy");
-        addSubCommand(new StatusSubCommand(config, plugin));
+        addSubCommand(new StatusSubCommand(plugin));
         addSubCommand(new OptimizeSubCommand(plugin));
+        addSubCommand(new ReloadSubCommand(plugin));
         addSubCommand(new HelpSubCommand());
     }
 
     private static final class StatusSubCommand extends CommandBase {
 
-        private final QuantumHyConfig config;
         private final QuantumHyPlugin plugin;
 
-        StatusSubCommand(QuantumHyConfig config, QuantumHyPlugin plugin) {
+        StatusSubCommand(QuantumHyPlugin plugin) {
             super("status", "Show QuantumHy status");
             requireNoPermission();
-            this.config = config;
             this.plugin = plugin;
         }
 
@@ -50,7 +49,36 @@ public class QuantumCommand extends AbstractCommandCollection {
                 personalStatus(ctx, plugin, playerRef);
                 return;
             }
-            adminStatus(ctx, config, plugin);
+            adminStatus(ctx, plugin.activeConfig(), plugin);
+        }
+    }
+
+    private static final class ReloadSubCommand extends CommandBase {
+        private final QuantumHyPlugin plugin;
+
+        ReloadSubCommand(QuantumHyPlugin plugin) {
+            super("reload", "Reload performance settings; structural changes require a restart");
+            requirePermission(QuantumHyPermissions.ADMIN);
+            this.plugin = plugin;
+        }
+
+        @Override
+        protected void executeSync(CommandContext ctx) {
+            if (ctx.sender() instanceof PlayerRef playerRef && !QuantumHyPermissions.isAdmin(playerRef)) {
+                send(ctx, "You do not have permission to reload QuantumHy.", "#FF5555");
+                return;
+            }
+            try {
+                var result = plugin.reloadConfig();
+                send(ctx, result.applied().isEmpty() ? "No live settings changed."
+                        : "QuantumHy settings applied: " + String.join(", ", result.applied()), "#55FF55");
+                if (!result.restartRequired().isEmpty()) {
+                    send(ctx, "Restart required (current values retained): "
+                            + String.join(", ", result.restartRequired()), "#FFAA00");
+                }
+            } catch (java.io.IOException | RuntimeException failed) {
+                send(ctx, "Reload rejected; active settings unchanged. " + failed.getMessage(), "#FF5555");
+            }
         }
     }
 
@@ -78,11 +106,15 @@ public class QuantumCommand extends AbstractCommandCollection {
                 return;
             }
             boolean enabled = "on".equals(mode);
-            boolean changed = plugin.setOptimizationEnabled(playerRef, enabled);
-            send(ctx, enabled
-                    ? "QuantumHy optimization enabled for you."
-                    : "QuantumHy optimization disabled for you. Your personal limits are being restored.",
-                    changed ? "#55FF55" : "#AAAAAA");
+            send(ctx, "Checking optimization state on your world...", "#AAAAAA");
+            plugin.setOptimizationEnabled(playerRef, enabled).whenComplete((reply, failure) -> {
+                if (failure != null) {
+                    plugin.getLogger().atWarning().withCause(failure).log("QuantumHy optimization request failed");
+                    send(ctx, "Could not finish applying optimization. Use /q status and retry the command.", "#FF5555");
+                } else {
+                    send(ctx, reply, "#AAAAAA");
+                }
+            });
         }
     }
 
@@ -100,6 +132,7 @@ public class QuantumCommand extends AbstractCommandCollection {
             send(ctx, "/q status - show your current QuantumHy status", "#AAAAAA");
             send(ctx, "/q help - this list", "#AAAAAA");
             if (!(ctx.sender() instanceof PlayerRef playerRef) || QuantumHyPermissions.isAdmin(playerRef)) {
+                send(ctx, "/q reload - reload performance settings", "#AAAAAA");
                 send(ctx, "Admins and console receive full server diagnostics from /q status.", "#999999");
             }
         }

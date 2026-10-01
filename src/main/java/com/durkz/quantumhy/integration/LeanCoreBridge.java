@@ -25,6 +25,10 @@ public final class LeanCoreBridge {
     private static volatile Ownership ownership = Ownership.NOT_PRESENT;
     private static volatile SavedViewFlags savedViewFlags;
 
+    private static final long CHUNK_RATE_CACHE_NANOS = 1_000_000_000L;
+    private static volatile boolean chunkRateOwned;
+    private static volatile long chunkRateReadAtNanos;
+
     private LeanCoreBridge() {
     }
 
@@ -73,9 +77,21 @@ public final class LeanCoreBridge {
         return ownership != Ownership.INCOMPATIBLE && ownership != Ownership.YIELD_CONFIGURED;
     }
 
+    /**
+     * Read on the 250ms stream path for every player, so the reflective lookup is cached for
+     * {@link #CHUNK_RATE_CACHE_NANOS}. LeanCore's flag only changes on its own config reload.
+     */
     public static boolean leanCoreOwnsChunkRate() {
+        long now = System.nanoTime();
+        long readAt = chunkRateReadAtNanos;
+        if (readAt != 0L && now - readAt < CHUNK_RATE_CACHE_NANOS) {
+            return chunkRateOwned;
+        }
         Object config = leanCoreConfig(getPlugin());
-        return config != null && readFlag(config, "chunkThroughputGovernanceEnabled");
+        boolean owned = config != null && readFlag(config, "chunkThroughputGovernanceEnabled");
+        chunkRateOwned = owned;
+        chunkRateReadAtNanos = now == 0L ? 1L : now;
+        return owned;
     }
 
     public static boolean shouldQuantumHyWriteChunkRate(QuantumHyConfig config) {
@@ -123,6 +139,7 @@ public final class LeanCoreBridge {
             writeViewFlags(config, saved.values());
         }
         savedViewFlags = null;
+        chunkRateReadAtNanos = 0L;
         ownership = isPresent() ? Ownership.EXTERNAL : Ownership.NOT_PRESENT;
     }
 

@@ -2,6 +2,7 @@ package com.durkz.quantumhy;
 
 import com.durkz.quantumhy.command.QuantumCommand;
 import com.durkz.quantumhy.config.QuantumHyConfig;
+import com.durkz.quantumhy.config.LiveConfig;
 import com.durkz.quantumhy.config.PlayerPreferences;
 import com.durkz.quantumhy.permissions.QuantumHyPermissions;
 import com.durkz.quantumhy.runtime.FpsRuntime;
@@ -9,6 +10,10 @@ import com.durkz.quantumhy.runtime.RuntimeSnapshot;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.update.ModUpdateChecker;
 import com.durkz.quantumhy.view.EntityCullSystem;
+import com.hypixel.hytale.protocol.packets.setup.ViewRadius;
+import com.hypixel.hytale.server.core.io.adapter.PacketAdapters;
+import com.hypixel.hytale.server.core.io.adapter.PacketFilter;
+import com.hypixel.hytale.server.core.io.adapter.PlayerPacketWatcher;
 import com.hypixel.hytale.server.core.event.events.ShutdownEvent;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
@@ -22,8 +27,10 @@ import org.checkerframework.checker.nullness.compatqual.NonNullDecl;
 public class QuantumHyPlugin extends JavaPlugin {
 
     private QuantumHyConfig config;
+    private LiveConfig liveConfig;
     private PlayerPreferences playerPreferences;
     private FpsRuntime runtime;
+    private PacketFilter viewRadiusWatcher;
 
     public QuantumHyPlugin(@NonNullDecl JavaPluginInit init) {
         super(init);
@@ -34,10 +41,11 @@ public class QuantumHyPlugin extends JavaPlugin {
         super.setup();
 
         config = QuantumHyConfig.load(getDataDirectory());
+        liveConfig = new LiveConfig(config);
         playerPreferences = PlayerPreferences.load(getDataDirectory());
 
         QuantumHyPermissions.register();
-        getCommandRegistry().registerCommand(new QuantumCommand(config, this));
+        getCommandRegistry().registerCommand(new QuantumCommand(this));
 
         if (!config.enabled) {
             getLogger().atInfo().log("QuantumHy %s disabled via config (enabled=false).",
@@ -47,15 +55,21 @@ public class QuantumHyPlugin extends JavaPlugin {
 
         runtime = new FpsRuntime(this, config, playerPreferences);
 
-        if (config.adaptEntityRadius || config.emergencyTerrainTrimEnabled
-                || config.maxEntityVerticalDistance > 0 || config.maxVisibleEntitiesPerPlayer > 0) {
-            getEntityStoreRegistry().registerSystem(
-                    new EntityCullSystem(EntityTrackerSystems.EntityViewer.getComponentType(), config,
-                            playerPreferences));
+        getEntityStoreRegistry().registerSystem(
+                new EntityCullSystem(EntityTrackerSystems.EntityViewer.getComponentType(), liveConfig,
+                        playerPreferences));
+
+        if (config.clientRenderCapEnabled) {
+            FpsRuntime capRuntime = runtime;
+            viewRadiusWatcher = PacketAdapters.registerInbound((PlayerPacketWatcher) (playerRef, packet) -> {
+                if (packet instanceof ViewRadius viewRadius && playerRef != null) {
+                    capRuntime.renderCap().onClientRequest(playerRef.getUuid(), viewRadius.value);
+                }
+            });
         }
 
         if (config.holdSpawnOnLoadingChunks) {
-            getChunkStoreRegistry().registerSystem(new SpawnStreamPauseSystem(config, getLogger()));
+            getChunkStoreRegistry().registerSystem(new SpawnStreamPauseSystem(liveConfig, getLogger()));
         }
 
         getEventRegistry().registerGlobal(ShutdownEvent.class, e -> {
@@ -65,6 +79,13 @@ public class QuantumHyPlugin extends JavaPlugin {
         });
         getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, event -> {
             PlayerRef playerRef = event.getHolder().getComponent(PlayerRef.getComponentType());
+            if (playerRef != null) {
+                EntityCullSystem.forget(playerRef.getUuid());
+                com.durkz.quantumhy.view.VisualLoadRegistry.remove(playerRef.getUuid());
+                if (runtime != null) {
+                    runtime.onWorldJoin(playerRef.getUuid());
+                }
+            }
             ModUpdateChecker.getInstance().notifyPlayer(playerRef);
         });
         getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, event -> {
@@ -118,20 +139,28 @@ public class QuantumHyPlugin extends JavaPlugin {
         return active == null ? RuntimeSnapshot.EMPTY : active.snapshot();
     }
 
+    public QuantumHyConfig activeConfig() {
+        return liveConfig.get();
+    }
+
+    public LiveConfig.ReloadResult reloadConfig() throws java.io.IOException {
+        return liveConfig.reload(getDataDirectory().resolve("QuantumHy.json"));
+    }
+
     public boolean isOptimizationEnabled(PlayerRef playerRef) {
         return playerPreferences == null || playerPreferences.isOptimizationEnabled(
                 playerRef == null ? null : playerRef.getUuid());
     }
 
-    public boolean setOptimizationEnabled(PlayerRef playerRef, boolean enabled) {
+    public java.util.concurrent.CompletableFuture<String> setOptimizationEnabled(PlayerRef playerRef, boolean enabled) {
         if (playerPreferences == null || playerRef == null || playerRef.getUuid() == null) {
-            return false;
+            return java.util.concurrent.CompletableFuture.completedFuture("Player session unavailable; try again after joining a world.");
         }
-        boolean changed = playerPreferences.setOptimizationEnabled(playerRef.getUuid(), enabled);
-        if (changed && runtime != null) {
-            runtime.optimizationChanged(playerRef, enabled);
+        if (runtime == null) {
+            return java.util.concurrent.CompletableFuture.completedFuture(
+                    "QuantumHy is disabled in the server configuration; a restart is required to enable it.");
         }
-        return changed;
+        return runtime.optimizationChanged(playerRef, enabled);
     }
 
     @Override
@@ -147,6 +176,13 @@ public class QuantumHyPlugin extends JavaPlugin {
     protected void shutdown() {
         stopDevPerfMeterIfPresent();
         ModUpdateChecker.getInstance().shutdown();
+        if (viewRadiusWatcher != null) {
+            try {
+                PacketAdapters.deregisterInbound(viewRadiusWatcher);
+            } catch (IllegalArgumentException alreadyGone) {
+            }
+            viewRadiusWatcher = null;
+        }
         if (runtime != null) {
             runtime.shutdown();
             runtime = null;

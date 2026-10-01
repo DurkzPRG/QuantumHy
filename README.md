@@ -8,12 +8,6 @@ QuantumHy is a server-side mod that makes your client run smoother in Hytale. It
 how much the server tells your client to draw, and it adjusts that per player depending on where
 you are.
 
-## Status
-
-Active. The current development build targets small servers and solo worlds. Runtime behavior and
-config migration are covered by unit tests, but performance numbers below remain historical captures
-from earlier releases until the current build gets a new paired client capture.
-
 ## Known limitations
 
 - The server does not receive the client's FPS, so QuantumHy responds to entity density, streaming

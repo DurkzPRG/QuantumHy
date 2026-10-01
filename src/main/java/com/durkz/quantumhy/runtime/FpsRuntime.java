@@ -218,6 +218,7 @@ public final class FpsRuntime {
             stream.retain(onlineScratch);
             strain.retain(onlineScratch);
             effects.retain(onlineScratch);
+            com.durkz.quantumhy.view.DistantUpdateThrottleSystem.retain(onlineScratch);
             playerSnapshotScratch.keySet().retainAll(onlineScratch);
             lastOnlineCount = onlineScratch.size();
 
@@ -568,6 +569,7 @@ public final class FpsRuntime {
         stream.forget(playerId);
         strain.forget(playerId);
         effects.forget(playerId);
+        com.durkz.quantumhy.view.DistantUpdateThrottleSystem.forget(playerId);
         playerSnapshotScratch.remove(playerId);
         VisualLoadRegistry.remove(playerId);
         publishSnapshot();
@@ -743,6 +745,7 @@ public final class FpsRuntime {
         VisualLoadRegistry.clear();
         EntityCullSystem.clearSession();
         SpawnStreamPauseSystem.clearSession();
+        com.durkz.quantumhy.view.DistantUpdateThrottleSystem.clearSession();
         worldNames.clear();
         activeWorldIds = Set.of();
         snapshot = RuntimeSnapshot.EMPTY;

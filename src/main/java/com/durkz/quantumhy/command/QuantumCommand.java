@@ -219,6 +219,9 @@ public class QuantumCommand extends AbstractCommandCollection {
                 + (config.leanCoreMemoryAware ? "" : " (ignored)"), "#AAAAAA");
         send(ctx, String.format(Locale.ROOT, "items: pressureMerge=%s radius=%.1f",
                 config.pressureItemMerge ? "on" : "off", config.pressureItemMergeRadius), "#AAAAAA");
+        send(ctx, String.format(Locale.ROOT, "distant updates: %s near=%db far=%db",
+                config.distantUpdateThrottleEnabled ? "throttled (experimental)" : "off",
+                config.distantUpdateNearBlocks, config.distantUpdateFarBlocks), "#AAAAAA");
         send(ctx, "online players: " + snap.onlineCount(), "#AAAAAA");
         if (snap.players().isEmpty()) {
             send(ctx, "runtime data: awaiting first pass", "#AAAAAA");

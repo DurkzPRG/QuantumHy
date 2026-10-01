@@ -78,6 +78,11 @@ public class QuantumHyPlugin extends JavaPlugin {
             effectFilter = PacketAdapters.registerOutbound(runtime.effects());
         }
 
+        if (config.distantUpdateThrottleEnabled) {
+            getEntityStoreRegistry().registerSystem(new com.durkz.quantumhy.view.DistantUpdateThrottleSystem(
+                    liveConfig, playerPreferences, runtime.strain()));
+        }
+
         if (config.pressureItemMerge) {
             getEntityStoreRegistry().registerSystem(
                     new com.durkz.quantumhy.pressure.ItemMergeBoostSystem(liveConfig));

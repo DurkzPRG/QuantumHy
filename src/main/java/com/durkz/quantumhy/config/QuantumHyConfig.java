@@ -122,6 +122,20 @@ public class QuantumHyConfig {
     /** Hard cut-off in blocks for positional effects. {@code 0} leaves only the budget. */
     public int effectMaxDistance = 0;
 
+    /**
+     * Experimental. Send position-only updates of distant entities less often: every tick within
+     * {@link #distantUpdateNearBlocks}, every 2nd tick up to {@link #distantUpdateFarBlocks}, every 4th
+     * beyond (doubled for a strained client). The latest position is always delivered, only later.
+     * New entities, model changes and removals are never delayed. Restart required.
+     */
+    public boolean distantUpdateThrottleEnabled = false;
+
+    /** Entities closer than this (blocks) get every position update. */
+    public int distantUpdateNearBlocks = 32;
+
+    /** Entities beyond this (blocks) get every 4th position update. */
+    public int distantUpdateFarBlocks = 64;
+
     /** Chunk radius scanned around each player to estimate local render cost. */
     public int densityScanChunkRadius = 4;
 
@@ -762,6 +776,12 @@ public class QuantumHyConfig {
         }
         if (effectMaxDistance < 0) {
             effectMaxDistance = 0;
+        }
+        if (distantUpdateNearBlocks < 8) {
+            distantUpdateNearBlocks = 32;
+        }
+        if (distantUpdateFarBlocks < distantUpdateNearBlocks) {
+            distantUpdateFarBlocks = Math.max(distantUpdateNearBlocks, 64);
         }
         if (configVersion < 0) {
             configVersion = 0;

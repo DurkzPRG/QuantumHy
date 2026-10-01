@@ -212,8 +212,13 @@ public class QuantumCommand extends AbstractCommandCollection {
                 config.effectBudgetPerSecond, config.effectProtectRadius, config.effectSoftRadius,
                 config.effectMaxDistance > 0 ? config.effectMaxDistance + "b" : "off",
                 com.durkz.quantumhy.effects.EffectBudgetFilter.DROPPED.sum()), "#AAAAAA");
+        String memoryTier = LeanCoreBridge.memoryTier();
         send(ctx, "LeanCore: state=" + LeanCoreBridge.ownership()
-                + " view=" + LeanCoreBridge.viewRadiusOwnerLabel(config), "#AAAAAA");
+                + " view=" + LeanCoreBridge.viewRadiusOwnerLabel(config)
+                + " memory=" + (memoryTier.isEmpty() ? "n/a" : memoryTier)
+                + (config.leanCoreMemoryAware ? "" : " (ignored)"), "#AAAAAA");
+        send(ctx, String.format(Locale.ROOT, "items: pressureMerge=%s radius=%.1f",
+                config.pressureItemMerge ? "on" : "off", config.pressureItemMergeRadius), "#AAAAAA");
         send(ctx, "online players: " + snap.onlineCount(), "#AAAAAA");
         if (snap.players().isEmpty()) {
             send(ctx, "runtime data: awaiting first pass", "#AAAAAA");

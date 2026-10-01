@@ -195,6 +195,13 @@ public final class PressureGovernor {
         return effective == null ? configDefault : effective;
     }
 
+    /** True while the world is in pressure mode after the last governor pass. Safe from ECS systems of that world. */
+    public static boolean isPressured(@Nullable UUID worldId) {
+        PressureGovernor governor = active;
+        WorldState state = governor == null || worldId == null ? null : governor.worlds.get(worldId);
+        return state != null && state.tier == Tier.PRESSURED;
+    }
+
     /** Combine the current reload snapshot with the world's pressure tier without a stale radius cache. */
     public static int verticalDistance(@Nonnull UUID worldId, @Nonnull QuantumHyConfig config) {
         PressureGovernor governor = active;

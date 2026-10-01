@@ -78,6 +78,11 @@ public class QuantumHyPlugin extends JavaPlugin {
             effectFilter = PacketAdapters.registerOutbound(runtime.effects());
         }
 
+        if (config.pressureItemMerge) {
+            getEntityStoreRegistry().registerSystem(
+                    new com.durkz.quantumhy.pressure.ItemMergeBoostSystem(liveConfig));
+        }
+
         if (config.holdSpawnOnLoadingChunks) {
             getChunkStoreRegistry().registerSystem(new SpawnStreamPauseSystem(liveConfig, getLogger()));
         }

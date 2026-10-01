@@ -291,6 +291,13 @@ public final class ClientViewRadiusController {
         }
         double strain = strainMonitor == null ? 0.0D : strainMonitor.strain(playerRef.getUuid());
         boolean clientStrained = strain > 0.0D;
+        double memoryFloor = LeanCoreBridge.memoryShrinkFloor(config);
+        if (memoryFloor > 0.0D) {
+            entityRawFrac = Math.max(entityRawFrac, memoryFloor);
+            if (config.adaptiveTerrainViewEnabled || config.emergencyTerrainTrimEnabled) {
+                rawFrac = Math.max(rawFrac, memoryFloor);
+            }
+        }
         if (clientStrained) {
             entityRawFrac = Math.max(entityRawFrac, ClientStrainPolicy.entityFraction(strain));
             if (config.adaptiveTerrainViewEnabled || config.emergencyTerrainTrimEnabled) {
@@ -298,7 +305,7 @@ public final class ClientViewRadiusController {
             }
         }
 
-        boolean canExpand = state != null && !clientStrained
+        boolean canExpand = state != null && !clientStrained && memoryFloor <= 0.0D
                 && ViewAdaptPolicy.canExpand(state.calmPasses, config.expandHysteresisPasses,
                 pass.pressured(), streaming, sampleCovered, movingFast);
         double frac = ViewAdaptPolicy.ratchetFrac(
@@ -313,6 +320,9 @@ public final class ClientViewRadiusController {
         if (clientStrained && frac > 0.0D
                 && ClientStrainPolicy.terrainFraction(strain) >= frac - 1e-6) {
             reason = "client-strain";
+        }
+        if (memoryFloor > 0.0D && frac > 0.0D && memoryFloor >= frac - 1e-6) {
+            reason = "leancore-memory";
         }
         if (state != null && state.hasAppliedFrac && frac > rawFrac + 1e-6 && !canExpand) {
             reason = "hold";
@@ -329,11 +339,12 @@ public final class ClientViewRadiusController {
         boolean chunkApplied = false;
         boolean chunkHeld = false;
         boolean terrainControlActive = config.adaptiveTerrainViewEnabled
-                || (config.emergencyTerrainTrimEnabled && (visualEmergency || clientStrained))
+                || (config.emergencyTerrainTrimEnabled && (visualEmergency || clientStrained || memoryFloor > 0.0D))
                 || (state != null && state.terrainWasControlled && chunkCurrent < radiusCeiling);
         if (!terrainControlActive) {
             chunkTarget = chunkCurrent;
-        } else if (!config.adaptiveTerrainViewEnabled && !visualEmergency && !clientStrained) {
+        } else if (!config.adaptiveTerrainViewEnabled && !visualEmergency && !clientStrained
+                && memoryFloor <= 0.0D) {
             chunkTarget = ViewAdaptPolicy.rampToward(
                     chunkCurrent, radiusCeiling, config.maxExpandChunksPerPass, shrinkCap);
             reason = "terrain-restore";

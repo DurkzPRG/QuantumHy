@@ -33,7 +33,8 @@ public final class LiveConfig implements Supplier<QuantumHyConfig> {
             "maxChunksPerSecond", "maxChunksPerTick", "streamCatchUpPerSecond",
             "streamCatchUpPerTick", "streamCatchUpHoldMs", "clientStrainFrameLagLowMs",
             "clientStrainFrameLagHighMs", "clientStrainQueueLow", "clientStrainQueueHigh",
-            "effectBudgetPerSecond", "effectProtectRadius", "effectSoftRadius", "effectMaxDistance");
+            "effectBudgetPerSecond", "effectProtectRadius", "effectSoftRadius", "effectMaxDistance",
+            "pressureItemMergeRadius", "leanCoreMemoryAware");
 
     private volatile QuantumHyConfig current;
 

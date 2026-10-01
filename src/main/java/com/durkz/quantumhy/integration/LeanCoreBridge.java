@@ -8,6 +8,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Locale;
+import javax.annotation.Nullable;
 
 /** Optional reflective coexistence contract with LeanCore. */
 public final class LeanCoreBridge {
@@ -26,6 +27,9 @@ public final class LeanCoreBridge {
     private static volatile SavedViewFlags savedViewFlags;
 
     private static final long CHUNK_RATE_CACHE_NANOS = 1_000_000_000L;
+    private static final long MEMORY_TIER_CACHE_NANOS = 5_000_000_000L;
+    private static volatile String memoryTier = "";
+    private static volatile long memoryTierReadAtNanos;
     private static volatile boolean chunkRateOwned;
     private static volatile long chunkRateReadAtNanos;
 
@@ -94,6 +98,47 @@ public final class LeanCoreBridge {
         return owned;
     }
 
+    /**
+     * LeanCore's current heap tier ({@code COMFORT}, {@code WATCH}, {@code TIGHT}, {@code CRITICAL}),
+     * or an empty string when LeanCore is absent or its API changed. Read-only, cached for
+     * {@link #MEMORY_TIER_CACHE_NANOS}: {@code plugin.runtime().lastSample().tier()}.
+     */
+    public static String memoryTier() {
+        long now = System.nanoTime();
+        long readAt = memoryTierReadAtNanos;
+        if (readAt != 0L && now - readAt < MEMORY_TIER_CACHE_NANOS) {
+            return memoryTier;
+        }
+        Object runtime = invokeNoArg(getPlugin(), "runtime");
+        Object sample = runtime == null ? null : invokeNoArg(runtime, "lastSample");
+        Object tier = sample == null ? null : invokeNoArg(sample, "tier");
+        String value = tier instanceof Enum<?> e ? e.name() : "";
+        memoryTier = value;
+        memoryTierReadAtNanos = now == 0L ? 1L : now;
+        return value;
+    }
+
+    /**
+     * Shrink floor QuantumHy applies while LeanCore reports heap pressure: the more conservative of
+     * the FPS target and the memory target wins. {@code 0} for any other tier.
+     */
+    public static double memoryShrinkFloor(@Nullable String tier) {
+        if ("CRITICAL".equals(tier)) {
+            return 0.5D;
+        }
+        if ("TIGHT".equals(tier)) {
+            return 0.25D;
+        }
+        return 0.0D;
+    }
+
+    public static double memoryShrinkFloor(QuantumHyConfig config) {
+        if (config == null || !config.leanCoreMemoryAware) {
+            return 0.0D;
+        }
+        return memoryShrinkFloor(memoryTier());
+    }
+
     public static boolean shouldQuantumHyWriteChunkRate(QuantumHyConfig config) {
         if (config == null || !config.smoothChunkStreaming || !shouldQuantumHyWriteViewRadius(config)) {
             return false;
@@ -127,8 +172,9 @@ public final class LeanCoreBridge {
 
     public static String coexistenceLine(QuantumHyConfig config) {
         return String.format(Locale.ROOT,
-                "LeanCore coexistence: state=%s view=%s chunkRate=%s hotRadius=LeanCore",
-                ownership, viewRadiusOwnerLabel(config), chunkRateOwnerLabel(config));
+                "LeanCore coexistence: state=%s view=%s chunkRate=%s hotRadius=LeanCore memoryAware=%s",
+                ownership, viewRadiusOwnerLabel(config), chunkRateOwnerLabel(config),
+                config != null && config.leanCoreMemoryAware);
     }
 
     /** Restores LeanCore's in-memory flags only when this runtime had a confirmed takeover. */
@@ -140,6 +186,8 @@ public final class LeanCoreBridge {
         }
         savedViewFlags = null;
         chunkRateReadAtNanos = 0L;
+        memoryTierReadAtNanos = 0L;
+        memoryTier = "";
         ownership = isPresent() ? Ownership.EXTERNAL : Ownership.NOT_PRESENT;
     }
 
@@ -157,6 +205,9 @@ public final class LeanCoreBridge {
     }
 
     private static Object invokeNoArg(Object target, String method) {
+        if (target == null) {
+            return null;
+        }
         try {
             Method m = target.getClass().getMethod(method);
             return m.invoke(target);

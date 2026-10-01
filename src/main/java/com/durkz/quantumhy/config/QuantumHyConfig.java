@@ -340,6 +340,22 @@ public class QuantumHyConfig {
     public double pressureEffectScale = 0.5D;
 
     /**
+     * Under pressure, widen the radius dropped items merge at so loose piles collapse into fewer
+     * entities. Items that block merging keep their behaviour; every item returns to its normal
+     * radius once pressure ends. The radius is not saved, so a restart also resets it. Restart required.
+     */
+    public boolean pressureItemMerge = false;
+
+    /** Merge radius in blocks while {@link #pressureItemMerge} is active (engine default is 2). */
+    public double pressureItemMergeRadius = 4.0D;
+
+    /**
+     * When LeanCore is installed, read its memory tier and tighten the render radius while the
+     * heap is TIGHT or CRITICAL. Read-only: LeanCore's own settings are never changed by this.
+     */
+    public boolean leanCoreMemoryAware = true;
+
+    /**
      * Config schema version written to QuantumHy.json. {@code 0} means legacy (pre-versioning).
      * Gson runs the no-arg constructor before overlaying JSON, so this must not default to
      * {@link #CURRENT_CONFIG_VERSION} or old files without the key would skip migration.
@@ -719,6 +735,9 @@ public class QuantumHyConfig {
         }
         if (pressureEffectScale <= 0 || pressureEffectScale > 1.0D) {
             pressureEffectScale = 0.5D;
+        }
+        if (pressureItemMergeRadius < 1.0D || pressureItemMergeRadius > 16.0D) {
+            pressureItemMergeRadius = 4.0D;
         }
         if (clientStrainFrameLagLowMs < 1) {
             clientStrainFrameLagLowMs = 25;

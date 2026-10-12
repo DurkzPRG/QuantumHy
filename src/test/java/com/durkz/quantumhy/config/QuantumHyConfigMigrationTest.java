@@ -67,8 +67,8 @@ class QuantumHyConfigMigrationTest {
         assertEquals(48.0D, config.pressureMsptEnter, 1e-9);
         assertTrue(config.densityRingWeighting);
         assertEquals(0.10D, config.baselineShrinkFraction, 1e-9);
-        assertEquals(700, config.chunkLoadLowChunks);
-        assertEquals(1550, config.chunkLoadHighChunks);
+        assertEquals(2800, config.chunkLoadLowChunks);
+        assertEquals(5900, config.chunkLoadHighChunks);
         assertEquals(80, config.streamingBacklogThreshold);
         assertEquals(8, config.maxChunksPerTick);
         assertEquals(1, config.maxExpandChunksPerPass);
@@ -79,8 +79,8 @@ class QuantumHyConfigMigrationTest {
         assertTrue(config.pressureExitRequiresLastTick);
         assertTrue(config.adaptiveTerrainViewEnabled);
         assertTrue(config.emergencyTerrainTrimEnabled);
-        assertEquals(8, config.configVersion);
-        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 8"));
+        assertEquals(9, config.configVersion);
+        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 9"));
     }
 
     @Test
@@ -91,23 +91,23 @@ class QuantumHyConfigMigrationTest {
 
         assertEquals(1.0D, config.densityLowPerChunk, 1e-9);
         assertEquals(4.0D, config.densityHighPerChunk, 1e-9);
-        assertEquals(700, config.chunkLoadLowChunks);
-        assertEquals(1550, config.chunkLoadHighChunks);
+        assertEquals(2800, config.chunkLoadLowChunks);
+        assertEquals(5900, config.chunkLoadHighChunks);
         assertEquals(80, config.streamingBacklogThreshold);
         assertEquals(8, config.maxChunksPerTick);
-        assertEquals(8, config.configVersion);
+        assertEquals(9, config.configVersion);
     }
 
     @Test
-    void migratesV3SectionDefaultsToView8Budget(@TempDir Path dir) throws Exception {
+    void migratesV3SectionDefaultsToView10Budget(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("QuantumHy.json"), V3_SECTION_DEFAULTS, StandardCharsets.UTF_8);
 
         QuantumHyConfig config = QuantumHyConfig.load(dir);
 
-        assertEquals(700, config.chunkLoadLowChunks);
-        assertEquals(1550, config.chunkLoadHighChunks);
+        assertEquals(2800, config.chunkLoadLowChunks);
+        assertEquals(5900, config.chunkLoadHighChunks);
         assertEquals(8, config.maxChunksPerTick);
-        assertEquals(8, config.configVersion);
+        assertEquals(9, config.configVersion);
     }
 
     @Test
@@ -127,7 +127,7 @@ class QuantumHyConfigMigrationTest {
         assertEquals(1, config.maxExpandChunksPerPass);
         assertEquals(2, config.expandHysteresisPasses);
         assertTrue(config.pressureExitRequiresLastTick);
-        assertEquals(8, config.configVersion);
+        assertEquals(9, config.configVersion);
     }
 
     @Test
@@ -135,7 +135,7 @@ class QuantumHyConfigMigrationTest {
         QuantumHyConfig config = QuantumHyConfig.load(dir);
 
         assertFalse(config.verboseLog);
-        assertEquals(8, config.configVersion);
+        assertEquals(9, config.configVersion);
         assertEquals(8, config.worldPassBudgetMs);
         assertEquals(1.0D, config.entityLodAggressiveness, 1e-9);
         assertFalse(config.holdSpawnOnLoadingChunks);
@@ -158,7 +158,7 @@ class QuantumHyConfigMigrationTest {
 
         assertTrue(config.adaptiveTerrainViewEnabled);
         assertTrue(config.emergencyTerrainTrimEnabled);
-        assertEquals(8, config.configVersion);
+        assertEquals(9, config.configVersion);
     }
 
     @Test
@@ -175,7 +175,40 @@ class QuantumHyConfigMigrationTest {
 
         assertFalse(config.adaptiveTerrainViewEnabled);
         assertFalse(config.emergencyTerrainTrimEnabled);
-        assertEquals(8, config.configVersion);
+        assertEquals(9, config.configVersion);
+    }
+
+    @Test
+    void v8ChunkLoadDefaultsMoveToView10Budget(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("QuantumHy.json"), """
+                {
+                  "chunkLoadLowChunks": 700,
+                  "chunkLoadHighChunks": 1550,
+                  "configVersion": 8
+                }
+                """, StandardCharsets.UTF_8);
+
+        QuantumHyConfig config = QuantumHyConfig.load(dir);
+
+        assertEquals(2800, config.chunkLoadLowChunks);
+        assertEquals(5900, config.chunkLoadHighChunks);
+        assertEquals(9, config.configVersion);
+    }
+
+    @Test
+    void v8KeepsCustomChunkLoadThresholds(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("QuantumHy.json"), """
+                {
+                  "chunkLoadLowChunks": 1200,
+                  "chunkLoadHighChunks": 3000,
+                  "configVersion": 8
+                }
+                """, StandardCharsets.UTF_8);
+
+        QuantumHyConfig config = QuantumHyConfig.load(dir);
+
+        assertEquals(1200, config.chunkLoadLowChunks);
+        assertEquals(3000, config.chunkLoadHighChunks);
     }
 
     @Test
@@ -184,7 +217,7 @@ class QuantumHyConfigMigrationTest {
         Files.writeString(file, """
                 {
                   "densitySmoothing": 0,
-                  "configVersion": 8
+                  "configVersion": 9
                 }
                 """, StandardCharsets.UTF_8);
 
@@ -204,8 +237,8 @@ class QuantumHyConfigMigrationTest {
 
         QuantumHyConfig config = QuantumHyConfig.load(dir);
 
-        assertEquals(8, config.configVersion);
-        assertTrue(Files.readString(file).contains("\"configVersion\": 8"));
+        assertEquals(9, config.configVersion);
+        assertTrue(Files.readString(file).contains("\"configVersion\": 9"));
         try (var files = Files.list(dir)) {
             assertTrue(files.anyMatch(path -> path.getFileName().toString()
                     .startsWith("QuantumHy.json.corrupt.")));

@@ -30,7 +30,7 @@ public class QuantumHyConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /** Bumped when shipped defaults change; older QuantumHy.json files migrate on load. */
-    private static final int CURRENT_CONFIG_VERSION = 8;
+    private static final int CURRENT_CONFIG_VERSION = 9;
 
     private transient File configFile;
 
@@ -166,15 +166,17 @@ public class QuantumHyConfig {
     /**
      * Extra shrink from how many sections are loaded or still streaming to this client (render
      * backlog). Separate from LeanCore hot/sim radius and throughput governance. Thresholds are
-     * section counts: ~0.4 / ~0.9 of a view-8 3D sphere budget (~1718 sections on 0.6).
+     * section counts. On 0.7 a fully streamed view r holds about 9 * pi * r^2 sections (view 6 ~880,
+     * view 10 ~2800, view 14 ~5900). The low threshold is also the expand gate, so it sets the view
+     * the radius settles at when calm; it must sit above what {@link #minClientViewRadius} loads.
      */
     public boolean chunkLoadShrinkEnabled = true;
 
     /** Loaded + loading section count at or below this adds no chunk-load shrink. */
-    public int chunkLoadLowChunks = 700;
+    public int chunkLoadLowChunks = 2800;
 
     /** At or above this loaded + loading section count, chunk-load shrink hits full strength. */
-    public int chunkLoadHighChunks = 1550;
+    public int chunkLoadHighChunks = 5900;
 
     /**
      * Smoothing for the density signal: weight of the newest sample in an exponential moving average,
@@ -515,6 +517,12 @@ public class QuantumHyConfig {
                 v -> chunkLoadLowChunks = v);
         changed |= remapInt(notes, "chunkLoadHighChunks", chunkLoadHighChunks, 1120, 1550,
                 v -> chunkLoadHighChunks = v);
+        // 700 sat below the ~880 sections view 6 loads on 0.7, so the radius never expanded off the
+        // minimum. Re-anchor on view 10 (calm target) to view 14 (full shrink).
+        changed |= remapInt(notes, "chunkLoadLowChunks", chunkLoadLowChunks, 700, 2800,
+                v -> chunkLoadLowChunks = v);
+        changed |= remapInt(notes, "chunkLoadHighChunks", chunkLoadHighChunks, 1550, 5900,
+                v -> chunkLoadHighChunks = v);
         changed |= remapInt(notes, "streamingBacklogThreshold", streamingBacklogThreshold, 8, 80,
                 v -> streamingBacklogThreshold = v);
         // Column-era anti-hitch 2/tick was extreme vs engine 40; soften to 8.
@@ -542,14 +550,14 @@ public class QuantumHyConfig {
             notes.add("chunkLoadShrinkEnabled=true");
         }
         if (!json.has("chunkLoadLowChunks") || chunkLoadLowChunks <= 0) {
-            chunkLoadLowChunks = 700;
+            chunkLoadLowChunks = 2800;
             changed = true;
-            notes.add("chunkLoadLowChunks=700");
+            notes.add("chunkLoadLowChunks=2800");
         }
         if (!json.has("chunkLoadHighChunks") || chunkLoadHighChunks <= 0) {
-            chunkLoadHighChunks = 1550;
+            chunkLoadHighChunks = 5900;
             changed = true;
-            notes.add("chunkLoadHighChunks=1550");
+            notes.add("chunkLoadHighChunks=5900");
         }
 
         if (!json.has("maxExpandChunksPerPass") || maxExpandChunksPerPass < 1) {
@@ -661,10 +669,10 @@ public class QuantumHyConfig {
             baselineShrinkFraction = 0.10D;
         }
         if (chunkLoadHighChunks <= 0) {
-            chunkLoadHighChunks = 1550;
+            chunkLoadHighChunks = 5900;
         }
         if (chunkLoadLowChunks < 0) {
-            chunkLoadLowChunks = 700;
+            chunkLoadLowChunks = 2800;
         }
         if (chunkLoadLowChunks >= chunkLoadHighChunks) {
             chunkLoadLowChunks = Math.max(0, chunkLoadHighChunks / 2);

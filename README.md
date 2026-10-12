@@ -50,13 +50,27 @@ set `targetClientViewRadius` above 0.
 It also smooths how fast chunks stream to you, so moving into fresh terrain arrives spread out
 instead of in one burst that makes the client hitch. That's the `smoothChunkStreaming` keys below.
 
+On top of the radius it also:
+
+- Caps the client's own draw distance and fog to the trimmed radius, so the client actually stops
+  drawing what the server stopped sending (`clientRenderCapEnabled`).
+- Watches how fast each client answers the server and how many packets it has queued. A client
+  that falls behind gets a tighter radius and a gentler chunk rate (`clientStrainEnabled`).
+- Budgets far particles and 3D sounds per player. Effects within 16 blocks always go through
+  (`effectBudgetEnabled`).
+- With LeanCore installed, tightens the radius while LeanCore reports the heap as tight
+  (`leanCoreMemoryAware`).
+- Optional, off by default: fewer position updates for far entities (`distantUpdateThrottleEnabled`)
+  and a wider item merge radius under server pressure (`pressureItemMerge`).
+
 Each player can use `/q optimize on|off`. The preference is stored by UUID and does not change how
 QuantumHy treats anyone else.
 
 ## Performance
 
-Client frametime capture on the **Hytale Client** process. Same test PC for every run below.
-Not lab benchmarks: different sessions, real play, spikes still happen.
+I played the same session twice on Hytale 0.7.0: once without QuantumHy, once with 0.4.0 on its
+default config. Same world, same path, same client settings, same PC. Frame times come straight
+from the Hytale client, captured with PresentMon (the capture tool inside CapFrameX).
 
 ### Test PC
 
@@ -66,144 +80,44 @@ Not lab benchmarks: different sessions, real play, spikes still happen.
 | GPU | NVIDIA GeForce GTX 1650 4GB |
 | RAM | 16 GB (2×8 GB) |
 
-### Stress route
+### What I did in each part
 
-Solo world, same stress route (birds and mobs on screen). QuantumHy disabled vs default config
-enabled. Run lengths differ slightly (~205s off, ~233s on).
+- **Fast flight (60 s):** flew in a straight line over terrain nobody had loaded yet, much faster
+  than you can sprint, so new chunks have to be generated and sent the whole time.
+- **Mob crowd (90 s):** stopped and spawned about 150 animals around me (sheep, cows, pigs, goats,
+  chickens, boars).
+- **Effects (60 s):** stayed on the crowd and spammed explosions, fire and hit particles on top of it.
+- **Circling (60 s):** flew laps around the crowd with lighter effects still going, so the camera
+  keeps sweeping across the mobs.
+- **Flight back (60 s):** flew back the same way I came.
 
-#### At a glance
+### Results
 
-| Metric | Mod off | Mod on | Change |
-| --- | ---: | ---: | --- |
-| Average FPS | 102 | 146 | **+43%** |
-| P5 | 51.6 | 91.1 | **+76%** |
-| P1 | 36.2 | 64.4 | **+78%** |
-| 1% low average | 14.0 | 19.8 | **+41%** |
-| Time under 60 FPS | 25.3% | 6.9% | **−73%** of that slice |
+| Part | Without QuantumHy (avg / 1% low) | QuantumHy 0.4.0 (avg / 1% low) | Frames over 50 ms |
+| --- | ---: | ---: | ---: |
+| Fast flight | 65 / 7 | 142 / 48 | 40 → 1 |
+| Mob crowd | 75 / 21 | 128 / 73 | 6 → 0 |
+| Effects | 76 / 41 | 121 / 79 | 0 → 0 |
+| Circling | 54 / 19 | 115 / 58 | 12 → 0 |
+| Flight back | 58 / 15 | 107 / 42 | 30 → 1 |
+| **Whole session** | **66 / 14** | **123 / 56** | **88 → 2** |
 
-P95 stayed high on both runs (~277 off, ~271 on). The big win is less time spent under 60 FPS and
-higher floor percentiles when the scene is busy. Massive frametime spikes (500ms–1s+) still show up
-on both runs, so QuantumHy helps sustained crowd load more than it removes one-off hitches.
+1% low is the average of the slowest 1% of frames, the number that tells you how bad the stutters get.
 
-#### Full capture
+![FPS over the whole session](docs/benchmark/fps-timeline.png)
 
-| Metric | Mod off | Mod on |
-| --- | ---: | ---: |
-| Recording length | ~205 s | ~233 s |
-| Average FPS | 102 | 146.1 |
-| P95 | 276.7 | 271.1 |
-| P5 | 51.6 | 91.1 |
-| P1 | 36.2 | 64.4 |
-| 1% low average | 14.0 | 19.8 |
-| P0.2 | 28.3 | 40.4 |
-| P0.1 | 21.6 | 30.7 |
-| 0.1% low average | 2.4 | 3.0 |
-| Stuttering (time) | 5.3% (10.7 s) | 5.5% (12.8 s) |
-| Smooth | 94.6% | 94.5% |
-| Under 240 FPS | 94.4% | 92.4% |
-| Under 60 FPS | 25.3% | 6.9% |
-| Under 30 FPS | 5.5% | 4.8% |
-| Under 10 FPS | 4.0% | 4.5% |
-| Frametime variance < 2 ms | 70.0% | 86.5% |
+![Average FPS and 1% low per part](docs/benchmark/fps-summary.png)
 
-#### Charts
+![Worst frame of every second](docs/benchmark/frametime-spikes.png)
 
-Each capture is the full session: frametime graph on top, plus one analysis panel below.
+### Where the frames come from
 
-**Mod off**
-
-![Stress route mod off, stuttering split](docs/benchmark/off-stuttering.png)
-
-![Stress route mod off, frametime variances](docs/benchmark/off-variances.png)
-
-![Stress route mod off, FPS thresholds](docs/benchmark/off-fps-thresholds.png)
-
-**Mod on**
-
-![Stress route mod on, stuttering split](docs/benchmark/on-stuttering.png)
-
-![Stress route mod on, frametime variances](docs/benchmark/on-variances.png)
-
-![Stress route mod on, FPS thresholds](docs/benchmark/on-fps-thresholds.png)
-
-#### Video
-
-Mod off: https://www.youtube.com/watch?v=H6Vns8b4hAg
-
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=H6Vns8b4hAg">
-    <img src="https://img.youtube.com/vi/H6Vns8b4hAg/maxresdefault.jpg" alt="QuantumHy stress route mod off" width="720">
-  </a>
-</p>
-
-Mod on: https://www.youtube.com/watch?v=CKGlXmX1M6k
-
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=CKGlXmX1M6k">
-    <img src="https://img.youtube.com/vi/CKGlXmX1M6k/maxresdefault.jpg" alt="QuantumHy stress route mod on" width="720">
-  </a>
-</p>
-
-### Normal gameplay (0.2.1)
-
-Solo world, normal session (**~5 min** each). No intentional stress route, just regular play.
-QuantumHy disabled vs **0.2.1** default config enabled.
-
-#### At a glance
-
-| Metric | Mod off | Mod on | Change |
-| --- | ---: | ---: | --- |
-| Average FPS | 159.6 | 226.9 | **+42%** |
-| P5 | 111.1 | 178.1 | **+60%** |
-| P1 | 77.2 | 139.1 | **+80%** |
-| 1% low average | 43.7 | 111.7 | **+155%** |
-| Time under 60 FPS | 2.2% | 0.1% | **−95%** of that slice |
-
-The 0.2.1 recalibration is meant for real exploration, not only mob piles: higher average FPS, a much
-higher floor (P5/P1), less time under 60 FPS, and tighter frametime consistency (87.8% → 95.1% of
-frames with <2 ms variance). Chunk-load hitches still show up on both runs; the mod cuts how long you
-sit in them.
-
-#### Full capture
-
-| Metric | Mod off | Mod on |
-| --- | ---: | ---: |
-| Session length | ~5 min | ~5 min |
-| Average FPS | 159.6 | 226.9 |
-| P95 | 219.7 | 272.7 |
-| P5 | 111.1 | 178.1 |
-| P1 | 77.2 | 139.1 |
-| 1% low average | 43.7 | 111.7 |
-| P0.2 | 51.5 | 105.5 |
-| P0.1 | 45.1 | 90.5 |
-| 0.1% low average | 11.6 | 61.9 |
-| Stuttering (time) | 1.9% | 0.2% |
-| Smooth | 98.1% | 99.8% |
-| Under 240 FPS | 99.5% | 64.3% |
-| Under 60 FPS | 2.2% | 0.1% |
-| Under 30 FPS | 1.2% | 0.1% |
-| Under 10 FPS | 1.0% | 0.0% |
-| Frametime variance < 2 ms | 87.8% | 95.1% |
-
-#### Charts
-
-![Normal gameplay comparison, mod off vs on](docs/benchmark/normal-comparison.png)
-
-**Mod off**
-
-![Normal gameplay mod off, stuttering split](docs/benchmark/normal-off-stuttering.png)
-
-![Normal gameplay mod off, frametime variances](docs/benchmark/normal-off-variances.png)
-
-![Normal gameplay mod off, FPS thresholds](docs/benchmark/normal-off-fps-thresholds.png)
-
-**Mod on**
-
-![Normal gameplay mod on, stuttering split](docs/benchmark/normal-on-stuttering.png)
-
-![Normal gameplay mod on, frametime variances](docs/benchmark/normal-on-variances.png)
-
-![Normal gameplay mod on, FPS thresholds](docs/benchmark/normal-on-fps-thresholds.png)
+- Without QuantumHy the client drew a view of 24 chunks and got every mob within 768 blocks. With
+  QuantumHy it settled at 12 chunks and mobs within 48 blocks (about 190 visible entities down to
+  about 50). That is the trade: you see less far, and the crowd stops costing you frames.
+- In the fast flight the edge of the view loads a little behind you, because nobody moves that
+  fast in survival. Normal sprinting (7 blocks/s) is well inside what the chunk stream keeps up with.
+- One session per setup, so differences under ~5% would be noise. The gaps above are not.
 
 ## Config
 
@@ -221,6 +135,20 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `maxClientViewRadius` | `32` | Ceiling for the hard cap (your own view radius still wins). |
 | `adaptiveTerrainViewEnabled` | `true` | Adapt terrain view radius during normal play. |
 | `emergencyTerrainTrimEnabled` | `true` | Allow temporary terrain trim after sustained visual pressure. |
+| `clientRenderCapEnabled` | `true` | Cap the client's draw distance and fog to the trimmed radius. Restart required. |
+| `clientStrainEnabled` | `true` | Ease the radius and chunk rate for a client that falls behind. Restart required. |
+| `clientStrainFrameLagLowMs` | `25` | Client main-loop lag (ms) where strain starts counting (about 40 FPS). |
+| `clientStrainFrameLagHighMs` | `60` | Lag treated as fully strained (about 16 FPS). |
+| `clientStrainQueueLow` | `64` | Client packet queue where strain starts counting. |
+| `clientStrainQueueHigh` | `512` | Packet queue treated as fully strained. |
+| `effectBudgetEnabled` | `true` | Budget far particles and 3D sounds per player. Restart required. |
+| `effectBudgetPerSecond` | `120` | Far effects each player may receive per second. |
+| `effectProtectRadius` | `16` | Effects within this many blocks are never dropped. |
+| `effectSoftRadius` | `48` | Once half the budget is spent, effects beyond this are dropped first. |
+| `effectMaxDistance` | `0` | Hard cut-off in blocks for positional effects. `0` = budget only. |
+| `distantUpdateThrottleEnabled` | `false` | Send position updates for far entities less often. The latest position always arrives. Restart required. |
+| `distantUpdateNearBlocks` | `32` | Entities closer than this get every update. |
+| `distantUpdateFarBlocks` | `64` | Entities beyond this get every 4th update. |
 | `densityScanChunkRadius` | `4` | How many chunks around you it counts entities in. |
 | `densityLowPerChunk` | `1.0` | Weighted entities per chunk at or below this: you get the full radius (minus optional baseline). |
 | `densityHighPerChunk` | `4.0` | Weighted entities per chunk at or above this: you get pulled to the minimum. |
@@ -228,8 +156,8 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `densityRingEdgeWeight` | `0.55` | Ring weight at the scan edge when ring weighting is on (`1.0` = flat count). |
 | `baselineShrinkFraction` | `0.10` | Minimum shrink even in "open" density (`0` = off). |
 | `chunkLoadShrinkEnabled` | `true` | Extra shrink from loaded + streaming section count (render backlog). |
-| `chunkLoadLowChunks` | `700` | Loaded + loading **sections** at or below this: no chunk-load shrink. |
-| `chunkLoadHighChunks` | `1550` | At or above this section count: chunk-load shrink hits full strength. |
+| `chunkLoadLowChunks` | `2800` | Loaded + loading **sections** at or below this: no chunk-load shrink. Also where the view settles when calm (about view 10 on 0.7). |
+| `chunkLoadHighChunks` | `5900` | At or above this section count: chunk-load shrink hits full strength (about view 14). |
 | `densitySmoothing` | `0.4` | Smooths the density signal so a moving player's view doesn't flip-flop. Lower is smoother; `1.0` is off. |
 | `adaptEntityRadius` | `true` | Also shrink how far entities are streamed (not just chunks). The big win in mob-heavy spots. |
 | `minEntityViewBlocks` | `48` | Never stream entities closer than this, in blocks (16 blocks = 1 chunk). |
@@ -268,6 +196,9 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `pressureWorldLevers` | `false` | Under pressure, pause NPC spawn and block tick on the world config (restored on release). |
 | `pressureTrimClientEffects` | `false` | Under pressure, trim bloom/sunshaft client effects (restored on release). |
 | `pressureEffectScale` | `0.5` | Multiplier for client effect intensities while trimmed. |
+| `pressureItemMerge` | `false` | Under pressure, merge dropped items from farther away so piles collapse into fewer entities. Restart required. |
+| `pressureItemMergeRadius` | `4.0` | Merge radius in blocks while that is active (engine default is 2). |
+| `leanCoreMemoryAware` | `true` | With LeanCore, tighten the radius while its heap tier is TIGHT or CRITICAL. Read-only. |
 
 ## Running with LeanCore
 

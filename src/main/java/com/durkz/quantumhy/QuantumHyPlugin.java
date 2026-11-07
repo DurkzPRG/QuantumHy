@@ -10,6 +10,9 @@ import com.durkz.quantumhy.runtime.RuntimeSnapshot;
 import com.durkz.quantumhy.spawn.SpawnStreamPauseSystem;
 import com.durkz.quantumhy.update.ModUpdateChecker;
 import com.durkz.quantumhy.view.EntityCullSystem;
+import com.durkz.quantumhy.lighting.LightingOptimizer;
+import com.hypixel.hytale.server.core.universe.world.events.AddWorldEvent;
+import com.hypixel.hytale.server.core.universe.world.events.RemoveWorldEvent;
 import com.hypixel.hytale.protocol.packets.connection.Pong;
 import com.hypixel.hytale.protocol.packets.setup.ViewRadius;
 import com.hypixel.hytale.server.core.io.adapter.PacketAdapters;
@@ -33,6 +36,7 @@ public class QuantumHyPlugin extends JavaPlugin {
     private FpsRuntime runtime;
     private PacketFilter inboundWatcher;
     private PacketFilter effectFilter;
+    private LightingOptimizer lightingOptimizer;
 
     public QuantumHyPlugin(@NonNullDecl JavaPluginInit init) {
         super(init);
@@ -43,6 +47,7 @@ public class QuantumHyPlugin extends JavaPlugin {
         super.setup();
 
         config = QuantumHyConfig.load(getDataDirectory());
+        LightingOptimizer.configureAgent(config.enabled && config.denseLightingEnabled, getLogger());
         liveConfig = new LiveConfig(config);
         playerPreferences = PlayerPreferences.load(getDataDirectory());
 
@@ -56,6 +61,12 @@ public class QuantumHyPlugin extends JavaPlugin {
         }
 
         runtime = new FpsRuntime(this, config, playerPreferences);
+        if (config.denseLightingEnabled) {
+            lightingOptimizer = new LightingOptimizer(getLogger());
+            LightingOptimizer lighting = lightingOptimizer;
+            getEventRegistry().registerGlobal(AddWorldEvent.class, event -> lighting.install(event.getWorld()));
+            getEventRegistry().registerGlobal(RemoveWorldEvent.class, event -> lighting.remove(event.getWorld()));
+        }
 
         getEntityStoreRegistry().registerSystem(
                 new EntityCullSystem(EntityTrackerSystems.EntityViewer.getComponentType(), liveConfig,
@@ -195,6 +206,10 @@ public class QuantumHyPlugin extends JavaPlugin {
     @Override
     protected void shutdown() {
         stopDevPerfMeterIfPresent();
+        if (lightingOptimizer != null) {
+            lightingOptimizer.close();
+            lightingOptimizer = null;
+        }
         ModUpdateChecker.getInstance().shutdown();
         if (inboundWatcher != null) {
             try {

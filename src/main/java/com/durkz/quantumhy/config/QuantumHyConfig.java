@@ -37,6 +37,9 @@ public class QuantumHyConfig {
     /** Master switch. When false, QuantumHy never touches any view radius. */
     public boolean enabled = true;
 
+    /** Buffers native light propagation. Requires a server restart. Unsupported binaries retain native lighting. */
+    public boolean denseLightingEnabled = true;
+
     /** Detailed server log: one line per world per pass with each player's density and view decision. */
     public boolean verboseLog = false;
 

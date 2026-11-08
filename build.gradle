@@ -88,11 +88,6 @@ def generatedManifestDir = layout.buildDirectory.dir('generated/manifest')
 sourceSets.main.resources.exclude('manifest.json')
 
 sourceSets {
-    agent {
-        java.srcDir 'src/agent/java'
-        compileClasspath += sourceSets.main.output + configurations.compileClasspath
-        runtimeClasspath += output + compileClasspath
-    }
     jfr {
         java.srcDir 'src/jfr/java'
         compileClasspath += sourceSets.main.output + configurations.compileClasspath
@@ -103,20 +98,6 @@ sourceSets {
         compileClasspath += sourceSets.main.output + configurations.compileClasspath
         runtimeClasspath += output + compileClasspath
     }
-}
-
-sourceSets.test.compileClasspath += sourceSets.agent.output
-sourceSets.test.runtimeClasspath += sourceSets.agent.output
-
-tasks.register('agentJar', Jar) {
-    dependsOn tasks.named('agentClasses')
-    archiveClassifier = 'agent'
-    from sourceSets.agent.output
-    from(sourceSets.main.output) {
-        include 'com/durkz/quantumhy/lighting/DenseLightBuffer.class'
-        include 'com/durkz/quantumhy/lighting/NativeLightKernel.class'
-    }
-    manifest.attributes('Premain-Class': 'com.durkz.quantumhy.agent.QuantumHyAgent')
 }
 
 dependencies {

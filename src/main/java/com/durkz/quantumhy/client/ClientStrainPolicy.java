@@ -3,10 +3,9 @@ package com.durkz.quantumhy.client;
 /**
  * Pure client-strain math. No Hytale types, so the scoring and hysteresis can be unit-tested.
  *
- * The client answers each ping three ways: {@code Raw} from the network thread, {@code Direct}
- * once the packet is handled, and {@code Tick} from its game loop. Both pongs answer the same ping,
- * so {@code Tick - Direct} is how long the client's main loop takes to get to it: a frame-time proxy
- * that network latency cancels out of.
+ * The spacing between Direct and Tick replies to the same ping is a loop-related congestion
+ * signal. Matching ping IDs avoids mixing different network round trips. This does not measure
+ * client frame time or FPS; response scheduling and transport can also affect the spacing.
  */
 public final class ClientStrainPolicy {
 
@@ -26,7 +25,7 @@ public final class ClientStrainPolicy {
     private ClientStrainPolicy() {
     }
 
-    /** Main-loop lag in milliseconds from the two pong round trips (microseconds). */
+    /** Response spacing in milliseconds from matched pong round trips (microseconds). */
     public static double frameLagMs(long tickRttMicros, long directRttMicros) {
         if (tickRttMicros <= 0L || directRttMicros <= 0L) {
             return 0.0D;

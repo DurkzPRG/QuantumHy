@@ -47,7 +47,6 @@ public class QuantumHyPlugin extends JavaPlugin {
         super.setup();
 
         config = QuantumHyConfig.load(getDataDirectory());
-        LightingOptimizer.configureAgent(config.enabled && config.denseLightingEnabled, getLogger());
         liveConfig = new LiveConfig(config);
         playerPreferences = PlayerPreferences.load(getDataDirectory());
 

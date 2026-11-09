@@ -25,6 +25,7 @@ public final class LeanCoreBridge {
 
     private static volatile Ownership ownership = Ownership.NOT_PRESENT;
     private static volatile SavedViewFlags savedViewFlags;
+    private static volatile SavedSimulationFlag savedSimulationFlag;
 
     private static final long CHUNK_RATE_CACHE_NANOS = 1_000_000_000L;
     private static final long MEMORY_TIER_CACHE_NANOS = 5_000_000_000L;
@@ -67,11 +68,34 @@ public final class LeanCoreBridge {
         }
         savedViewFlags = saved;
         ownership = Ownership.TAKEOVER_CONFIRMED;
+        if (config.simulationDistanceEnabled && savedSimulationFlag == null) {
+            try {
+                Field flag = leanConfig.getClass().getField("hotRadiusGovernanceEnabled");
+                boolean original = flag.getBoolean(leanConfig);
+                flag.setBoolean(leanConfig, false);
+                savedSimulationFlag = new SavedSimulationFlag(leanConfig, flag, original);
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                savedSimulationFlag = null;
+            }
+        }
         return ownership;
     }
 
     public static Ownership ownership() {
         return ownership;
+    }
+
+    public static boolean shouldQuantumHyWriteSimulationRadius(QuantumHyConfig config) {
+        if (config == null || !config.enabled || !config.simulationDistanceEnabled) return false;
+        if (!isPresent()) return true;
+        SavedSimulationFlag saved = savedSimulationFlag;
+        if (ownership != Ownership.TAKEOVER_CONFIRMED || saved == null
+                || leanCoreConfig(getPlugin()) != saved.config()) return false;
+        try {
+            return !saved.field().getBoolean(saved.config());
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return false;
+        }
     }
 
     public static boolean shouldQuantumHyWriteViewRadius(QuantumHyConfig config) {
@@ -172,13 +196,23 @@ public final class LeanCoreBridge {
 
     public static String coexistenceLine(QuantumHyConfig config) {
         return String.format(Locale.ROOT,
-                "LeanCore coexistence: state=%s view=%s chunkRate=%s hotRadius=LeanCore memoryAware=%s",
+                "LeanCore coexistence: state=%s view=%s chunkRate=%s hotRadius=%s memoryAware=%s",
                 ownership, viewRadiusOwnerLabel(config), chunkRateOwnerLabel(config),
+                shouldQuantumHyWriteSimulationRadius(config) ? "QuantumHy" : isPresent() ? "LeanCore" : "native",
                 config != null && config.leanCoreMemoryAware);
     }
 
     /** Restores LeanCore's in-memory flags only when this runtime had a confirmed takeover. */
     public static void restoreOwnership() {
+        SavedSimulationFlag simulation = savedSimulationFlag;
+        if (simulation != null) {
+            try {
+                if (!simulation.field().getBoolean(simulation.config()))
+                    simulation.field().setBoolean(simulation.config(), simulation.original());
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+            }
+        }
+        savedSimulationFlag = null;
         SavedViewFlags saved = savedViewFlags;
         Object config = leanCoreConfig(getPlugin());
         if (ownership == Ownership.TAKEOVER_CONFIRMED && saved != null && config != null) {
@@ -255,5 +289,8 @@ public final class LeanCoreBridge {
     }
 
     private record SavedViewFlags(boolean[] values) {
+    }
+
+    private record SavedSimulationFlag(Object config, Field field, boolean original) {
     }
 }

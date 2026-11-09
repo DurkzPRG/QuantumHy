@@ -13,6 +13,55 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class QuantumHyConfigMigrationTest {
 
+    @Test
+    void simulationDefaultsAreAddedWithoutOverwritingAnExplicitOptOut(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("QuantumHy.json");
+        Files.writeString(file, "{\"configVersion\":9}");
+        QuantumHyConfig loaded = QuantumHyConfig.load(dir);
+        assertTrue(loaded.simulationDistanceEnabled);
+        assertEquals(4, loaded.simulationDistanceChunks);
+        Files.writeString(file, "{\"configVersion\":9,\"simulationDistanceEnabled\":false,\"simulationDistanceChunks\":6}");
+        loaded = QuantumHyConfig.load(dir);
+        assertFalse(loaded.simulationDistanceEnabled);
+        assertEquals(6, loaded.simulationDistanceChunks);
+    }
+
+    @Test
+    void invalidSimulationLimitsAreClampedWithoutChangingViewLimits(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("QuantumHy.json");
+        Files.writeString(file, "{\"configVersion\":9,\"simulationDistanceChunks\":-4,\"maxClientViewRadius\":24}");
+        QuantumHyConfig loaded = QuantumHyConfig.load(dir);
+        assertEquals(2, loaded.simulationDistanceChunks);
+        assertEquals(24, loaded.maxClientViewRadius);
+        Files.writeString(file, "{\"configVersion\":9,\"simulationDistanceChunks\":999}");
+        assertEquals(32, QuantumHyConfig.load(dir).simulationDistanceChunks);
+    }
+
+    @Test
+    void diskStreamingIsOnByDefaultAndNativeRadiusIsClamped(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("QuantumHy.json");
+        Files.writeString(file, "{\"configVersion\":9}");
+        QuantumHyConfig loaded = QuantumHyConfig.load(dir);
+        assertTrue(loaded.diskStreamingEnabled);
+        assertEquals(6, loaded.diskNativeRadiusChunks);
+        Files.writeString(file, "{\"configVersion\":9,\"diskStreamingEnabled\":false,\"diskNativeRadiusChunks\":1}");
+        loaded = QuantumHyConfig.load(dir);
+        assertFalse(loaded.diskStreamingEnabled);
+        assertEquals(3, loaded.diskNativeRadiusChunks);
+        Files.writeString(file, "{\"configVersion\":9,\"diskNativeRadiusChunks\":99}");
+        assertEquals(32, QuantumHyConfig.load(dir).diskNativeRadiusChunks);
+    }
+
+    @Test
+    void existingConfigurationGetsSmokeDefaultAndExplicitDisableIsPreserved(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("QuantumHy.json");
+        Files.writeString(file, "{\"configVersion\":9}");
+        assertTrue(QuantumHyConfig.load(dir).cosmeticSmokeBudgetEnabled);
+        assertTrue(Files.readString(file).contains("\"cosmeticSmokeBudgetEnabled\": true"));
+        Files.writeString(file, "{\"configVersion\":9,\"cosmeticSmokeBudgetEnabled\":false}");
+        assertFalse(QuantumHyConfig.load(dir).cosmeticSmokeBudgetEnabled);
+    }
+
     private static final String LEGACY_020 = """
             {
               "enabled": true,

@@ -12,6 +12,16 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class LiveConfigTest {
     @Test
+    void cosmeticSmokeIsEnabledByDefaultAndRequiresRestartToDisable() throws Exception {
+        assertTrue(new QuantumHyConfig().cosmeticSmokeBudgetEnabled);
+        LiveConfig live = new LiveConfig(new QuantumHyConfig());
+        var result = live.reloadJson("{\"cosmeticSmokeBudgetEnabled\":false}");
+        assertEquals(List.of("cosmeticSmokeBudgetEnabled"), result.restartRequired());
+        assertTrue(result.applied().isEmpty());
+        assertTrue(live.get().cosmeticSmokeBudgetEnabled);
+    }
+
+    @Test
     void publishesDetachedSnapshotWithoutMutatingOriginalOrFile(@TempDir Path dir) throws Exception {
         QuantumHyConfig original = new QuantumHyConfig();
         LiveConfig live = new LiveConfig(original);

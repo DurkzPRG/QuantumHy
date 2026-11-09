@@ -4,6 +4,7 @@ import com.durkz.quantumhy.command.QuantumCommand;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.config.LiveConfig;
 import com.durkz.quantumhy.config.PlayerPreferences;
+import com.durkz.quantumhy.disk.DiskStreamingSystems;
 import com.durkz.quantumhy.permissions.QuantumHyPermissions;
 import com.durkz.quantumhy.runtime.FpsRuntime;
 import com.durkz.quantumhy.runtime.RuntimeSnapshot;
@@ -18,6 +19,7 @@ import com.hypixel.hytale.protocol.packets.setup.ViewRadius;
 import com.hypixel.hytale.server.core.io.adapter.PacketAdapters;
 import com.hypixel.hytale.server.core.io.adapter.PacketFilter;
 import com.hypixel.hytale.server.core.io.adapter.PlayerPacketWatcher;
+import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.event.events.ShutdownEvent;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
@@ -98,6 +100,14 @@ public class QuantumHyPlugin extends JavaPlugin {
                     new com.durkz.quantumhy.pressure.ItemMergeBoostSystem(liveConfig));
         }
 
+        if (runtime.disk() != null) {
+            FpsRuntime streaming = runtime;
+            getEntityStoreRegistry().registerSystem(new DiskStreamingSystems.Before(streaming.disk(),
+                    streaming::diskWanted, ignored -> liveConfig.get().diskNativeRadiusChunks));
+            getEntityStoreRegistry().registerSystem(new DiskStreamingSystems.After(streaming.disk()));
+            getLogger().atInfo().log("Experimental disk streaming enabled (native radius %d).", config.diskNativeRadiusChunks);
+        }
+
         if (config.holdSpawnOnLoadingChunks) {
             getChunkStoreRegistry().registerSystem(new SpawnStreamPauseSystem(liveConfig, getLogger()));
         }
@@ -113,7 +123,8 @@ public class QuantumHyPlugin extends JavaPlugin {
                 EntityCullSystem.forget(playerRef.getUuid());
                 com.durkz.quantumhy.view.VisualLoadRegistry.remove(playerRef.getUuid());
                 if (runtime != null) {
-                    runtime.onWorldJoin(playerRef.getUuid());
+                    runtime.onWorldJoin(playerRef.getUuid(), event.getHolder().getComponent(
+                            com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker.getComponentType()));
                 }
             }
             ModUpdateChecker.getInstance().notifyPlayer(playerRef);
@@ -123,6 +134,12 @@ public class QuantumHyPlugin extends JavaPlugin {
             ModUpdateChecker.getInstance().forgetPlayer(playerRef.getUuid());
             if (runtime != null) {
                 runtime.forgetPlayer(playerRef.getUuid());
+            }
+        });
+        getEventRegistry().registerGlobal(PlayerReadyEvent.class, event -> {
+            var ref = event.getPlayerRef();
+            if (runtime != null && ref != null && ref.isValid()) {
+                runtime.onPlayerReady(ref.getStore().getComponent(ref, PlayerRef.getComponentType()));
             }
         });
 

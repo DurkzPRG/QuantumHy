@@ -2,9 +2,11 @@ package com.durkz.quantumhy.runtime;
 
 import com.durkz.quantumhy.QuantumHyPlugin;
 import com.durkz.quantumhy.client.ClientStrainMonitor;
+import com.durkz.quantumhy.client.CosmeticSmokeProfile;
 import com.durkz.quantumhy.effects.EffectBudgetFilter;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.config.PlayerPreferences;
+import com.durkz.quantumhy.disk.DiskStreamer;
 import com.durkz.quantumhy.pressure.GlobalLodPolicy;
 import com.durkz.quantumhy.pressure.PressureGovernor;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
@@ -14,9 +16,11 @@ import com.durkz.quantumhy.view.ClientViewRadiusController;
 import com.durkz.quantumhy.view.EntityCullSystem;
 import com.durkz.quantumhy.view.StreamCatchUpPolicy;
 import com.durkz.quantumhy.view.StreamRateController;
+import com.durkz.quantumhy.view.SimulationDistanceController;
 import com.durkz.quantumhy.view.VisualLoadRegistry;
 import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
+import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -52,8 +56,11 @@ public final class FpsRuntime {
     private final ClientRenderCap renderCap;
     private final ClientStrainMonitor strain;
     private final EffectBudgetFilter effects;
+    private final CosmeticSmokeProfile cosmeticSmoke;
     private final ClientViewRadiusController controller;
+    private final DiskStreamer disk;
     private final StreamRateController stream;
+    private final SimulationDistanceController simulation = new SimulationDistanceController();
     private final PressureGovernor pressure;
     private final OptimizationRequests optimizationRequests = new OptimizationRequests();
     private final double originalEntityLodRatio;
@@ -89,7 +96,9 @@ public final class FpsRuntime {
         this.renderCap = new ClientRenderCap(config.clientRenderCapEnabled);
         this.strain = new ClientStrainMonitor(config.clientStrainEnabled);
         this.effects = new EffectBudgetFilter(plugin::activeConfig, preferences, strain);
-        this.controller = new ClientViewRadiusController(config, renderCap, strain);
+        this.cosmeticSmoke = new CosmeticSmokeProfile(config.cosmeticSmokeBudgetEnabled, plugin.getLogger());
+        this.disk = config.diskStreamingEnabled ? new DiskStreamer() : null;
+        this.controller = new ClientViewRadiusController(config, renderCap, strain, disk);
         this.stream = new StreamRateController(config);
         this.pressure = new PressureGovernor(plugin);
         this.originalEntityLodRatio = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO;
@@ -127,6 +136,8 @@ public final class FpsRuntime {
                 config.targetClientViewRadius, config.minClientViewRadius,
                 config.maxClientViewRadius, config.densityScanChunkRadius, config.adaptEntityRadius);
         ensureLeanCoreCoexistence();
+        Collection<PlayerRef> existingPlayers = Universe.get().getPlayers();
+        if (existingPlayers != null) for (PlayerRef player : existingPlayers) onPlayerReady(player);
     }
 
     /** Set the global entity LOD ratio from config (server-wide). Restored on shutdown. */
@@ -147,7 +158,8 @@ public final class FpsRuntime {
             LeanCoreBridge.Ownership state = LeanCoreBridge.establishOwnership(config);
             if (state == LeanCoreBridge.Ownership.TAKEOVER_CONFIRMED) {
                 plugin.getLogger().atInfo().log(
-                        "LeanCore detected: QuantumHy takeover confirmed. LeanCore keeps simulation and memory.");
+                        "LeanCore detected: QuantumHy view takeover confirmed (simulation radius owned=%s). LeanCore keeps memory.",
+                        LeanCoreBridge.shouldQuantumHyWriteSimulationRadius(config));
             } else if (state == LeanCoreBridge.Ownership.INCOMPATIBLE) {
                 plugin.getLogger().atWarning().log(
                         "LeanCore bridge could not confirm ownership: QuantumHy safely yields view radius and chunk streaming.");
@@ -189,6 +201,7 @@ public final class FpsRuntime {
                 clearOnlineState();
                 return;
             }
+            cosmeticSmoke.retainPlayers(online);
 
             onlineScratch.clear();
             worldScratch.clear();
@@ -372,7 +385,11 @@ public final class FpsRuntime {
         int changed = 0;
         StringBuilder details = config.verboseLog ? new StringBuilder() : null;
         for (PlayerRef ref : batch) {
+            if (!ref.isValid() || !worldUuid.equals(ref.getWorldUuid())) continue;
             try {
+                cosmeticSmoke.update(ref, preferences.isOptimizationEnabled(ref.getUuid()));
+                simulation.apply(ref.getUuid(), ref.getChunkTracker(), config.simulationDistanceChunks,
+                        preferences.isOptimizationEnabled(ref.getUuid()), LeanCoreBridge.shouldQuantumHyWriteSimulationRadius(config));
                 ClientViewRadiusController.Decision decision;
                 if (preferences.isOptimizationEnabled(ref.getUuid())) {
                     decision = controller.applyOne(ref, world, pass, deadlineNs, config);
@@ -450,6 +467,30 @@ public final class FpsRuntime {
         return effects;
     }
 
+    public void onPlayerReady(PlayerRef player) {
+        if (!running || player == null) return;
+        cosmeticSmoke.update(player, preferences.isOptimizationEnabled(player.getUuid()));
+        UUID worldId = player.getWorldUuid();
+        World world = worldId == null ? null : Universe.get().getWorld(worldId);
+        if (world == null || !world.isAlive()) return;
+        world.execute(() -> {
+            if (running && player.isValid() && worldId.equals(player.getWorldUuid()))
+                simulation.apply(player.getUuid(), player.getChunkTracker(), config.simulationDistanceChunks,
+                        preferences.isOptimizationEnabled(player.getUuid()), LeanCoreBridge.shouldQuantumHyWriteSimulationRadius(config));
+        });
+    }
+
+    /** Null unless disk streaming was enabled at startup. */
+    public DiskStreamer disk() {
+        return disk;
+    }
+
+    /** World thread. Disk streaming follows the player's optimization switch and QuantumHy's view ownership. */
+    public boolean diskWanted(PlayerRef player) {
+        return running && player != null && preferences.isOptimizationEnabled(player.getUuid())
+                && LeanCoreBridge.shouldQuantumHyWriteViewRadius(plugin.activeConfig());
+    }
+
     /** Shared with the inbound {@code ViewRadius} watcher registered by the plugin. */
     public ClientRenderCap renderCap() {
         return renderCap;
@@ -458,6 +499,12 @@ public final class FpsRuntime {
     /** The engine re-sends the server max view radius when a player enters a world. */
     public void onWorldJoin(UUID playerId) {
         renderCap.onWorldJoin(playerId);
+    }
+
+    public void onWorldJoin(UUID playerId, ChunkTracker incoming) {
+        simulation.onWorldJoin(playerId, incoming);
+        if (disk != null) disk.forget(playerId);
+        onWorldJoin(playerId);
     }
 
     public PressureGovernor pressureGovernor() {
@@ -559,14 +606,17 @@ public final class FpsRuntime {
     }
 
     public void forgetPlayer(UUID playerId) {
+        cosmeticSmoke.forget(playerId);
         optimizationRequests.forget(playerId);
         clearPlayerState(playerId);
     }
 
     private void clearPlayerState(UUID playerId) {
+        if (disk != null) disk.forget(playerId);
         EntityCullSystem.forget(playerId);
         controller.forget(playerId);
         stream.forget(playerId);
+        simulation.forget(playerId);
         strain.forget(playerId);
         effects.forget(playerId);
         com.durkz.quantumhy.view.DistantUpdateThrottleSystem.forget(playerId);
@@ -592,15 +642,23 @@ public final class FpsRuntime {
                 return "Player world changed or stopped; optimization was not changed. Retry in your current world.";
             }
             boolean changed = preferences.setOptimizationEnabled(playerId, requested);
+            cosmeticSmoke.update(playerRef, requested);
             String reply;
             if (!requested) {
+                if (disk != null) {
+                    Player player = playerRef.getReference().getStore().getComponent(playerRef.getReference(), Player.getComponentType());
+                    disk.release(playerId, player);
+                }
                 controller.restoreOne(playerRef);
                 stream.restoreOne(playerRef);
+                simulation.restore(playerId, playerRef.getChunkTracker());
                 clearPlayerState(playerId);
                 reply = changed ? "Optimization disabled. Personal radius and streaming limits restored."
                         : "Optimization was already disabled. Personal limits checked and restored.";
             } else {
                 QuantumHyConfig settings = plugin.activeConfig();
+                simulation.apply(playerId, playerRef.getChunkTracker(), settings.simulationDistanceChunks,
+                        true, LeanCoreBridge.shouldQuantumHyWriteSimulationRadius(settings));
                 PressureGovernor.Snapshot pressureSnap = pressure.snapshotFor(worldId);
                 PressureGovernor.ViewPassContext pass = pressure.viewContext(settings, pressureSnap);
                 long deadline = settings.worldPassBudgetMs <= 0 ? Long.MAX_VALUE
@@ -637,6 +695,7 @@ public final class FpsRuntime {
     }
 
     private void clearOnlineState() {
+        cosmeticSmoke.clear();
         EntityCullSystem.clearSession();
         onlineScratch.clear();
         worldScratch.clear();
@@ -701,8 +760,11 @@ public final class FpsRuntime {
             pending.add(done);
             world.execute(() -> {
                 try {
+                    if (disk != null) disk.releaseWorld(world, batch);
                     controller.restoreAll(batch);
                     stream.restoreAll(batch);
+                    simulation.restoreAll(batch);
+                    for (PlayerRef player : batch) cosmeticSmoke.update(player, false);
                     pressure.restoreWorld(world, config);
                     done.complete(null);
                 } catch (RuntimeException ex) {
@@ -752,6 +814,9 @@ public final class FpsRuntime {
     }
 
     private void clearAdaptiveState() {
+        if (disk != null) disk.close();
+        simulation.clear();
+        cosmeticSmoke.clear();
         pressure.clearSession();
         controller.clear();
         stream.clear();

@@ -40,6 +40,21 @@ public class QuantumHyConfig {
     /** Buffers native light propagation. Requires a server restart. Unsupported binaries retain native lighting. */
     public boolean denseLightingEnabled = true;
 
+    /** Keep visible terrain while limiting nearby native simulation. Distant gameplay pauses outside this radius. */
+    public boolean simulationDistanceEnabled = true;
+
+    /** Simulation radius in 32-block chunks, capped by the player's original native simulation radius. */
+    public int simulationDistanceChunks = 4;
+
+    /**
+     * Keeps the player's view radius while native chunk loading stops at {@link #diskNativeRadiusChunks}; saved
+     * terrain beyond it is streamed from storage. Entities in those far chunks are not loaded. Requires a restart.
+     */
+    public boolean diskStreamingEnabled = true;
+
+    /** Native load radius in chunks while disk streaming is on. Never below the simulation radius plus one. */
+    public int diskNativeRadiusChunks = 6;
+
     /** Detailed server log: one line per world per pass with each player's density and view decision. */
     public boolean verboseLog = false;
 
@@ -112,6 +127,9 @@ public class QuantumHyConfig {
      * client is strained. Restart required.
      */
     public boolean effectBudgetEnabled = true;
+
+    /** Preload a lower-density copy of selected native goblin pipe smoke. Unchanged radius. Restart required. */
+    public boolean cosmeticSmokeBudgetEnabled = true;
 
     /** Far effects (outside {@link #effectProtectRadius}) each player may receive per second. */
     public int effectBudgetPerSecond = 120;
@@ -641,6 +659,8 @@ public class QuantumHyConfig {
     }
 
     void applyDefaults() {
+        simulationDistanceChunks = Math.clamp(simulationDistanceChunks, 2, 32);
+        diskNativeRadiusChunks = Math.clamp(diskNativeRadiusChunks, 3, 32);
         if (tickIntervalSeconds <= 0) {
             tickIntervalSeconds = 5;
         }

@@ -3,6 +3,7 @@ package com.durkz.quantumhy.view;
 import com.durkz.quantumhy.client.ClientStrainMonitor;
 import com.durkz.quantumhy.client.ClientStrainPolicy;
 import com.durkz.quantumhy.config.QuantumHyConfig;
+import com.durkz.quantumhy.disk.DiskStreamer;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.pressure.PressureGovernor.ViewPassContext;
 import com.durkz.quantumhy.runtime.RuntimeMetrics;
@@ -47,6 +48,8 @@ public final class ClientViewRadiusController {
     private final ClientRenderCap renderCap;
     @Nullable
     private final ClientStrainMonitor strainMonitor;
+    @Nullable
+    private final DiskStreamer disk;
     private final Map<UUID, PlayerState> players = new ConcurrentHashMap<>();
     private final Map<UUID, Decision> lastDecisions = new ConcurrentHashMap<>();
 
@@ -60,9 +63,16 @@ public final class ClientViewRadiusController {
 
     public ClientViewRadiusController(QuantumHyConfig config, @Nullable ClientRenderCap renderCap,
                                       @Nullable ClientStrainMonitor strainMonitor) {
+        this(config, renderCap, strainMonitor, null);
+    }
+
+    /** With disk streaming, chunk radius reads and writes mean the visible radius; the stream caps native loading. */
+    public ClientViewRadiusController(QuantumHyConfig config, @Nullable ClientRenderCap renderCap,
+                                      @Nullable ClientStrainMonitor strainMonitor, @Nullable DiskStreamer disk) {
         this.config = config;
         this.renderCap = renderCap;
         this.strainMonitor = strainMonitor;
+        this.disk = disk;
         this.densityScanPlan = DensityScanPlan.of(config.densityScanChunkRadius,
                 config.densityRingWeighting, config.densityRingEdgeWeight);
     }
@@ -165,11 +175,11 @@ public final class ClientViewRadiusController {
             densityScanPlan = state.scanPlan;
         }
         ChunkTracker tracker = playerRef.getChunkTracker();
-        int chunkCurrent = player.getClientViewRadius();
+        int chunkCurrent = chunkRadius(playerRef, player);
         int requested = renderCap == null ? -1 : renderCap.requestedChunks(playerRef.getUuid());
         int chunkCeiling = requested > 0
                 ? requestedCeiling(state, requested)
-                : ceiling(state, State.CHUNK, Math.max(1, player.getViewRadius()));
+                : ceiling(state, State.CHUNK, Math.max(1, Math.min(chunkCurrent, maxViewRadius())));
         int radiusCeiling = chunkBase(chunkCeiling, config);
         int radiusMinimum = Math.min(config.minClientViewRadius, radiusCeiling);
         EntityTrackerSystems.EntityViewer viewer = config.adaptEntityRadius
@@ -357,7 +367,7 @@ public final class ClientViewRadiusController {
         if (chunkWantsWrite && (streaming || !allowWrites)) {
             chunkHeld = true;
         } else if (chunkWantsWrite) {
-            player.setClientViewRadius(chunkTarget);
+            setChunkRadius(playerRef, player, chunkTarget);
             chunkApplied = true;
         }
 
@@ -523,8 +533,8 @@ public final class ClientViewRadiusController {
         Store<EntityStore> store = ref.getStore();
         Player player = store.getComponent(ref, Player.getComponentType());
         if (player != null && state.chunkCeiling > 0
-                && player.getClientViewRadius() < state.chunkCeiling) {
-            player.setClientViewRadius(state.chunkCeiling);
+                && chunkRadius(playerRef, player) < state.chunkCeiling) {
+            setChunkRadius(playerRef, player, state.chunkCeiling);
         }
         EntityTrackerSystems.EntityViewer viewer = store.getComponent(
                 ref, EntityTrackerSystems.EntityViewer.getComponentType());
@@ -552,8 +562,8 @@ public final class ClientViewRadiusController {
         }
         Store<EntityStore> store = ref.getStore();
         Player player = store.getComponent(ref, Player.getComponentType());
-        if (player != null && player.getClientViewRadius() > state.lastLiveChunk) {
-            player.setClientViewRadius(state.lastLiveChunk);
+        if (player != null && chunkRadius(playerRef, player) > state.lastLiveChunk) {
+            setChunkRadius(playerRef, player, state.lastLiveChunk);
         }
         EntityTrackerSystems.EntityViewer viewer = store.getComponent(
                 ref, EntityTrackerSystems.EntityViewer.getComponentType());
@@ -789,6 +799,15 @@ public final class ClientViewRadiusController {
             state.chunkCeiling = value;
         }
         return value;
+    }
+
+    private int chunkRadius(PlayerRef playerRef, Player player) {
+        return disk == null ? player.getClientViewRadius() : disk.visibleRadius(playerRef.getUuid(), player);
+    }
+
+    private void setChunkRadius(PlayerRef playerRef, Player player, int radius) {
+        if (disk == null) player.setClientViewRadius(radius);
+        else disk.setVisibleRadius(playerRef.getUuid(), player, radius);
     }
 
     private static int maxViewRadius() {

@@ -10,7 +10,7 @@ import java.util.HexFormat;
 
 final class CosmeticSmokeDescriptors {
     static final String SOURCE = "Dungeon_Goblin_Smoke_Pipe_Large";
-    static final String ALIAS = "QuantumHy_Cosmetic_Smoke_Budget_v1";
+    static final String ALIAS = "QuantumHy_Cosmetic_Smoke_Budget_V1";
     // Fingerprint detached clones: the protocol copy normalizes native animation map implementations.
     private static final String SPAWNER_SHA256 = "9bf76fb39773951733631b04b4418a74457077183f848e606c478e79a4326446";
     private static final String SYSTEM_SHA256 = "6d1c1c1d88e3e46f57e49ccddb35b4e47bd669eb6645cd6d852bf87c57ea9ab8";

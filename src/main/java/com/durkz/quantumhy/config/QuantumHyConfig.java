@@ -52,7 +52,7 @@ public class QuantumHyConfig {
      */
     public boolean diskStreamingEnabled = true;
 
-    /** Native load radius in chunks while disk streaming is on. Never below the simulation radius plus one. */
+    /** Native load ceiling with disk streaming. Pressure can tighten it, retaining a simulation + 1 margin. */
     public int diskNativeRadiusChunks = 6;
 
     /** Detailed server log: one line per world per pass with each player's density and view decision. */
@@ -81,14 +81,14 @@ public class QuantumHyConfig {
     public int maxClientViewRadius = 32;
 
     /**
-     * Allow the density controller to reduce terrain view radius during normal play. Enabled by
-     * default for the maximum-FPS profile; users can disable it to preserve visible terrain.
+     * Adapt terrain loading to density and streaming pressure. With DISK active this controls native
+     * residency while the disk band preserves the visible radius; otherwise it controls visible terrain.
      */
     public boolean adaptiveTerrainViewEnabled = true;
 
     /**
-     * Allow a temporary terrain trim when server-visible entity or streaming pressure stays high.
-     * This is only a proxy for client load because the server does not receive client FPS metrics.
+     * Allow emergency terrain relief. With DISK, server pressure adjusts residency and only sustained
+     * client loop delay can trim visibility. The protocol does not report client FPS or GPU usage.
      */
     public boolean emergencyTerrainTrimEnabled = true;
 
@@ -179,8 +179,8 @@ public class QuantumHyConfig {
     public double densityRingEdgeWeight = 0.55D;
 
     /**
-     * Minimum shrink fraction even when density is "open". Keeps a light trim in normal exploration
-     * instead of sitting at full radius until a mob pile. {@code 0} disables the floor.
+     * Minimum shrink for entities and legacy non-DISK terrain. With DISK, terrain residency and
+     * visibility have no fixed floor. {@code 0} disables the entity and legacy terrain floor.
      */
     public double baselineShrinkFraction = 0.10D;
 

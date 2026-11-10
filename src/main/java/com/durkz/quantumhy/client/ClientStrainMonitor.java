@@ -88,6 +88,18 @@ public final class ClientStrainMonitor {
             state.counter = 0;
         }
         state.published = state.strained ? state.ema : 0.0D;
+        double terrainScore = fresh ? ClientStrainPolicy.terrainScore(lagMs,
+                config.clientStrainFrameLagLowMs, config.clientStrainFrameLagHighMs,
+                queue, config.clientStrainQueueLow, backpressure) : 0.0D;
+        state.terrainEma = ClientStrainPolicy.ema(state.terrainEma, terrainScore, state.hasTerrainEma);
+        state.hasTerrainEma = true;
+        state.terrainCounter = ClientStrainPolicy.nextCounter(state.terrainStrained,
+                state.terrainEma, state.terrainCounter);
+        if (ClientStrainPolicy.flips(state.terrainStrained, state.terrainCounter)) {
+            state.terrainStrained = !state.terrainStrained;
+            state.terrainCounter = 0;
+        }
+        state.publishedTerrain = state.terrainStrained ? state.terrainEma : 0.0D;
     }
 
     /** Strain in {@code [0, 1]} while the player is strained, else {@code 0}. */
@@ -98,6 +110,12 @@ public final class ClientStrainMonitor {
 
     public boolean strained(@Nullable UUID playerId) {
         return strain(playerId) > 0.0D;
+    }
+
+    /** Sustained matched loop-delay signal, not a measurement of FPS or GPU utilization. */
+    public double terrainStrain(@Nullable UUID playerId) {
+        State state = playerId == null ? null : players.get(playerId);
+        return state == null ? 0.0D : state.publishedTerrain;
     }
 
     /** Last main-loop lag sample, for /q status. */
@@ -124,6 +142,11 @@ public final class ClientStrainMonitor {
         final PongPairTracker pongs = new PongPairTracker();
         volatile double published;
         volatile double frameLagMs;
+        volatile double publishedTerrain;
+        double terrainEma;
+        boolean hasTerrainEma;
+        boolean terrainStrained;
+        int terrainCounter;
         long lastSequence;
         long lastTickSequence;
         double ema;
@@ -138,6 +161,11 @@ public final class ClientStrainMonitor {
             hasEma = false;
             strained = false;
             counter = 0;
+            publishedTerrain = 0.0D;
+            terrainEma = 0.0D;
+            hasTerrainEma = false;
+            terrainStrained = false;
+            terrainCounter = 0;
         }
     }
 }

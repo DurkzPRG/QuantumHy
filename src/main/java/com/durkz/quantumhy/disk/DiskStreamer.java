@@ -15,6 +15,7 @@ import com.hypixel.hytale.server.core.universe.world.storage.ChunkStore;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.universe.world.storage.GetChunkFlags;
 import com.hypixel.hytale.server.core.universe.world.storage.IChunkLoader;
+import com.durkz.quantumhy.view.DiskRadiusPolicy;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -78,6 +79,10 @@ public final class DiskStreamer {
         return playerId != null && sessions.containsKey(playerId);
     }
 
+    public boolean canStream(World world) {
+        return !closed && budget(world).enabled() && DiskSnapshots.supports(world.getChunkStore());
+    }
+
     /** Radius the player should see. Equals the live radius when DISK does not own the player. */
     public int visibleRadius(@Nullable UUID playerId, Player player) {
         Session session = playerId == null ? null : sessions.get(playerId);
@@ -95,6 +100,21 @@ public final class DiskStreamer {
         session.enforce(player);
     }
 
+    /** World thread. Only residency changes; the visible target and simulation lease remain independent. */
+    public int adaptNativeRadius(UUID playerId, Player player, double fraction, boolean canExpand,
+                                boolean allowWrites, int maxExpand, int maxShrink) {
+        Session session = sessions.get(playerId);
+        if (session == null) return -1;
+        int ceiling = DiskGeometry.nativeRadius(session.nativeConfigured, session.simulation, session.visible);
+        int target = DiskRadiusPolicy.nativeTarget(session.appliedNative, ceiling, session.simulation,
+                fraction, canExpand, maxExpand, maxShrink);
+        if (allowWrites) {
+            session.adaptiveNative = target;
+            session.enforce(player);
+        }
+        return session.appliedNative;
+    }
+
     /**
      * World thread, before the native tracker update. Opens, keeps or releases the session and re-applies the
      * native cap when something else wrote the live radius (the engine copies client ViewRadius packets into it).
@@ -109,7 +129,7 @@ public final class DiskStreamer {
             session.discarded = true;
             session = null;
         }
-        boolean enabled = wanted && !closed && budget(world).enabled() && DiskSnapshots.supports(world.getChunkStore());
+        boolean enabled = wanted && canStream(world);
         if (!enabled) {
             if (session != null) release(session, player);
             return;
@@ -120,6 +140,7 @@ public final class DiskStreamer {
         }
         int live = player.getClientViewRadius();
         if (live != session.appliedNative) session.visible = live;
+        if (session.nativeConfigured != nativeConfigured) session.adaptiveNative = -1;
         session.nativeConfigured = nativeConfigured;
         session.simulation = simulation;
         session.enforce(player);
@@ -297,6 +318,7 @@ public final class DiskStreamer {
         int visible;
         int appliedNative = -1;
         int nativeConfigured;
+        int adaptiveNative = -1;
         int simulation;
         long ticks;
         int px = Integer.MIN_VALUE;
@@ -318,7 +340,8 @@ public final class DiskStreamer {
         }
 
         void enforce(Player player) {
-            int target = DiskGeometry.nativeRadius(nativeConfigured, simulation, visible);
+            int limit = adaptiveNative < 0 ? nativeConfigured : Math.min(nativeConfigured, adaptiveNative);
+            int target = DiskGeometry.nativeRadius(limit, simulation, visible);
             if (player.getClientViewRadius() != target) player.setClientViewRadius(target);
             appliedNative = target;
         }

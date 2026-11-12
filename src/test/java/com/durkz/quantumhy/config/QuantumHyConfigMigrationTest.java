@@ -38,18 +38,10 @@ class QuantumHyConfigMigrationTest {
     }
 
     @Test
-    void diskStreamingIsOnByDefaultAndNativeRadiusIsClamped(@TempDir Path dir) throws Exception {
+    void removedDiskStreamingKeysStillLoad(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("QuantumHy.json");
-        Files.writeString(file, "{\"configVersion\":9}");
-        QuantumHyConfig loaded = QuantumHyConfig.load(dir);
-        assertTrue(loaded.diskStreamingEnabled);
-        assertEquals(6, loaded.diskNativeRadiusChunks);
-        Files.writeString(file, "{\"configVersion\":9,\"diskStreamingEnabled\":false,\"diskNativeRadiusChunks\":1}");
-        loaded = QuantumHyConfig.load(dir);
-        assertFalse(loaded.diskStreamingEnabled);
-        assertEquals(3, loaded.diskNativeRadiusChunks);
-        Files.writeString(file, "{\"configVersion\":9,\"diskNativeRadiusChunks\":99}");
-        assertEquals(32, QuantumHyConfig.load(dir).diskNativeRadiusChunks);
+        Files.writeString(file, "{\"configVersion\":9,\"diskStreamingEnabled\":true,\"diskNativeRadiusChunks\":6,\"maxClientViewRadius\":24}");
+        assertEquals(24, QuantumHyConfig.load(dir).maxClientViewRadius);
     }
 
     @Test

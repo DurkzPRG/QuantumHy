@@ -3,7 +3,6 @@ package com.durkz.quantumhy.view;
 import com.durkz.quantumhy.client.ClientStrainMonitor;
 import com.durkz.quantumhy.client.ClientStrainPolicy;
 import com.durkz.quantumhy.config.QuantumHyConfig;
-import com.durkz.quantumhy.disk.DiskStreamer;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
 import com.durkz.quantumhy.pressure.PressureGovernor.ViewPassContext;
 import com.durkz.quantumhy.runtime.RuntimeMetrics;
@@ -48,8 +47,6 @@ public final class ClientViewRadiusController {
     private final ClientRenderCap renderCap;
     @Nullable
     private final ClientStrainMonitor strainMonitor;
-    @Nullable
-    private final DiskStreamer disk;
     private final Map<UUID, PlayerState> players = new ConcurrentHashMap<>();
     private final Map<UUID, Decision> lastDecisions = new ConcurrentHashMap<>();
 
@@ -63,16 +60,9 @@ public final class ClientViewRadiusController {
 
     public ClientViewRadiusController(QuantumHyConfig config, @Nullable ClientRenderCap renderCap,
                                       @Nullable ClientStrainMonitor strainMonitor) {
-        this(config, renderCap, strainMonitor, null);
-    }
-
-    /** With disk streaming, chunk radius reads and writes mean the visible radius; the stream caps native loading. */
-    public ClientViewRadiusController(QuantumHyConfig config, @Nullable ClientRenderCap renderCap,
-                                      @Nullable ClientStrainMonitor strainMonitor, @Nullable DiskStreamer disk) {
         this.config = config;
         this.renderCap = renderCap;
         this.strainMonitor = strainMonitor;
-        this.disk = disk;
         this.densityScanPlan = DensityScanPlan.of(config.densityScanChunkRadius,
                 config.densityRingWeighting, config.densityRingEdgeWeight);
     }
@@ -169,14 +159,13 @@ public final class ClientViewRadiusController {
         }
 
         PlayerState state = stateFor(playerRef.getUuid());
-        boolean diskActive = disk != null && disk.canStream(world);
         DensityScanPlan densityScanPlan = this.densityScanPlan;
         if (state != null) {
             state.settingsChanged(config);
             densityScanPlan = state.scanPlan;
         }
         ChunkTracker tracker = playerRef.getChunkTracker();
-        int chunkCurrent = chunkRadius(playerRef, player);
+        int chunkCurrent = player.getClientViewRadius();
         int requested = renderCap == null ? -1 : renderCap.requestedChunks(playerRef.getUuid());
         int chunkCeiling = requested > 0
                 ? requestedCeiling(state, requested)
@@ -309,7 +298,6 @@ public final class ClientViewRadiusController {
                 rawFrac = Math.max(rawFrac, memoryFloor);
             }
         }
-        double serverTerrainFrac = rawFrac;
         if (clientStrained) {
             entityRawFrac = Math.max(entityRawFrac, ClientStrainPolicy.entityFraction(strain));
             if (config.adaptiveTerrainViewEnabled || config.emergencyTerrainTrimEnabled) {
@@ -344,42 +332,18 @@ public final class ClientViewRadiusController {
             reason = "pressure";
         }
 
-        if (diskActive) {
-            double nativeServerFraction = config.adaptiveTerrainViewEnabled
-                    ? DiskRadiusPolicy.serverTerrainFraction(densityFrac, chunkLoadFrac) : serverTerrainFrac;
-            double nativeFraction = DiskRadiusPolicy.nativeFraction(nativeServerFraction,
-                    config.adaptiveTerrainViewEnabled, config.emergencyTerrainTrimEnabled,
-                    pass.pressured(), memoryFloor);
-            int nativeRadius = disk.adaptNativeRadius(playerRef.getUuid(), player, nativeFraction,
-                    canExpand, allowWrites, config.maxExpandChunksPerPass,
-                    ViewAdaptPolicy.chunkShrinkCap(config.maxShrinkChunksPerPass, pass.pressured()));
-            double loopStrain = strainMonitor == null ? 0.0D : strainMonitor.terrainStrain(playerRef.getUuid());
-            rawFrac = DiskRadiusPolicy.visibleFraction(config.emergencyTerrainTrimEnabled, loopStrain,
-                    pass.pressured(), memoryFloor, streaming);
-            boolean restoreVisible = DiskRadiusPolicy.visibleRecoveryAllowed(config.emergencyTerrainTrimEnabled,
-                    loopStrain, pass.pressured(), memoryFloor, streaming);
-            if (state != null) state.diskVisibleCalmPasses = ViewAdaptPolicy.nextCalmPasses(
-                    state.diskVisibleCalmPasses, restoreVisible);
-            boolean visibleCanExpand = state != null
-                    && state.diskVisibleCalmPasses >= config.expandHysteresisPasses;
-            frac = ViewAdaptPolicy.ratchetFrac(rawFrac, state == null ? 0.0D : state.lastAppliedFrac,
-                    state != null && state.hasAppliedFrac, visibleCanExpand);
-            reason = (nativeRadius < 1 ? "disk-pending" : "disk-native-" + nativeRadius)
-                    + (frac > 0.0D ? "/client-loop-limit" : "/view-preserved");
-        }
-
         int chunkIdeal = scale(radiusCeiling, radiusMinimum, frac);
         int shrinkCap = ViewAdaptPolicy.chunkShrinkCap(config.maxShrinkChunksPerPass, pass.pressured());
         int chunkTarget = ViewAdaptPolicy.rampToward(
                 chunkCurrent, chunkIdeal, config.maxExpandChunksPerPass, shrinkCap);
         boolean chunkApplied = false;
         boolean chunkHeld = false;
-        boolean terrainControlActive = diskActive || config.adaptiveTerrainViewEnabled
+        boolean terrainControlActive = config.adaptiveTerrainViewEnabled
                 || (config.emergencyTerrainTrimEnabled && (visualEmergency || clientStrained || memoryFloor > 0.0D))
                 || (state != null && state.terrainWasControlled && chunkCurrent < radiusCeiling);
         if (!terrainControlActive) {
             chunkTarget = chunkCurrent;
-        } else if (!diskActive && !config.adaptiveTerrainViewEnabled && !visualEmergency && !clientStrained
+        } else if (!config.adaptiveTerrainViewEnabled && !visualEmergency && !clientStrained
                 && memoryFloor <= 0.0D) {
             chunkTarget = ViewAdaptPolicy.rampToward(
                     chunkCurrent, radiusCeiling, config.maxExpandChunksPerPass, shrinkCap);
@@ -390,10 +354,10 @@ public final class ClientViewRadiusController {
             chunkTarget = chunkCurrent;
         }
         boolean chunkWantsWrite = terrainControlActive && chunkTarget != chunkCurrent;
-        if (chunkWantsWrite && ((!diskActive && streaming) || !allowWrites)) {
+        if (chunkWantsWrite && (streaming || !allowWrites)) {
             chunkHeld = true;
         } else if (chunkWantsWrite) {
-            setChunkRadius(playerRef, player, chunkTarget);
+            player.setClientViewRadius(chunkTarget);
             chunkApplied = true;
         }
 
@@ -559,8 +523,8 @@ public final class ClientViewRadiusController {
         Store<EntityStore> store = ref.getStore();
         Player player = store.getComponent(ref, Player.getComponentType());
         if (player != null && state.chunkCeiling > 0
-                && chunkRadius(playerRef, player) < state.chunkCeiling) {
-            setChunkRadius(playerRef, player, state.chunkCeiling);
+                && player.getClientViewRadius() < state.chunkCeiling) {
+            player.setClientViewRadius(state.chunkCeiling);
         }
         EntityTrackerSystems.EntityViewer viewer = store.getComponent(
                 ref, EntityTrackerSystems.EntityViewer.getComponentType());
@@ -588,8 +552,8 @@ public final class ClientViewRadiusController {
         }
         Store<EntityStore> store = ref.getStore();
         Player player = store.getComponent(ref, Player.getComponentType());
-        if (player != null && chunkRadius(playerRef, player) > state.lastLiveChunk) {
-            setChunkRadius(playerRef, player, state.lastLiveChunk);
+        if (player != null && player.getClientViewRadius() > state.lastLiveChunk) {
+            player.setClientViewRadius(state.lastLiveChunk);
         }
         EntityTrackerSystems.EntityViewer viewer = store.getComponent(
                 ref, EntityTrackerSystems.EntityViewer.getComponentType());
@@ -827,15 +791,6 @@ public final class ClientViewRadiusController {
         return value;
     }
 
-    private int chunkRadius(PlayerRef playerRef, Player player) {
-        return disk == null ? player.getClientViewRadius() : disk.visibleRadius(playerRef.getUuid(), player);
-    }
-
-    private void setChunkRadius(PlayerRef playerRef, Player player, int radius) {
-        if (disk == null) player.setClientViewRadius(radius);
-        else disk.setVisibleRadius(playerRef.getUuid(), player, radius);
-    }
-
     private static int maxViewRadius() {
         return com.hypixel.hytale.server.core.HytaleServer.get().getConfig().getMaxViewRadius();
     }
@@ -894,7 +849,6 @@ public final class ClientViewRadiusController {
             cachedDensity = Density.NONE;
             hasSmoothed = false;
             calmPasses = 0;
-            diskVisibleCalmPasses = 0;
         }
 
         int chunkCeiling;
@@ -907,7 +861,6 @@ public final class ClientViewRadiusController {
         boolean hasAppliedFrac;
         boolean hasPassedOnce;
         int calmPasses;
-        int diskVisibleCalmPasses;
         boolean hasDensityCache;
         int cacheChunkX;
         int cacheChunkZ;

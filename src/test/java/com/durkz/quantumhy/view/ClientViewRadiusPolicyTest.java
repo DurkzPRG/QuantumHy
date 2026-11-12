@@ -20,7 +20,6 @@ class ClientViewRadiusPolicyTest {
         state.hasDensityCache = true;
         state.hasSmoothed = true;
         state.calmPasses = 5;
-        state.diskVisibleCalmPasses = 5;
         state.settingsChanged(first);
         assertTrue(state.hasDensityCache);
         var second = new com.durkz.quantumhy.config.QuantumHyConfig();
@@ -29,7 +28,6 @@ class ClientViewRadiusPolicyTest {
         assertFalse(state.hasDensityCache);
         assertFalse(state.hasSmoothed);
         assertEquals(0, state.calmPasses);
-        assertEquals(0, state.diskVisibleCalmPasses);
         assertEquals(16, state.chunkCeiling);
         assertEquals(128, state.entityCeiling);
         assertTrue(state.hasAppliedFrac);

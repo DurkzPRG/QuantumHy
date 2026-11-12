@@ -46,13 +46,6 @@ public final class ClientStrainPolicy {
         return hasPrevious ? EMA_ALPHA * sample + (1.0D - EMA_ALPHA) * previous : sample;
     }
 
-    /** Loop-delay evidence without treating a blocked transport or packet backlog as rendering pressure. */
-    public static double terrainScore(double loopLagMs, int lowMs, int highMs, int queue,
-                                      int queueLow, boolean backpressure) {
-        if (backpressure || queue < 0 || queue > queueLow) return 0.0D;
-        return smoothstep(loopLagMs, lowMs, highMs);
-    }
-
     /**
      * Next hysteresis counter. Positive counts samples toward entering, negative toward leaving;
      * the caller flips {@code strained} when {@link #flips} says so.

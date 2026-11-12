@@ -4,7 +4,6 @@ import com.durkz.quantumhy.command.QuantumCommand;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.config.LiveConfig;
 import com.durkz.quantumhy.config.PlayerPreferences;
-import com.durkz.quantumhy.disk.DiskStreamingSystems;
 import com.durkz.quantumhy.permissions.QuantumHyPermissions;
 import com.durkz.quantumhy.runtime.FpsRuntime;
 import com.durkz.quantumhy.runtime.RuntimeSnapshot;
@@ -98,14 +97,6 @@ public class QuantumHyPlugin extends JavaPlugin {
         if (config.pressureItemMerge) {
             getEntityStoreRegistry().registerSystem(
                     new com.durkz.quantumhy.pressure.ItemMergeBoostSystem(liveConfig));
-        }
-
-        if (runtime.disk() != null) {
-            FpsRuntime streaming = runtime;
-            getEntityStoreRegistry().registerSystem(new DiskStreamingSystems.Before(streaming.disk(),
-                    streaming::diskWanted, ignored -> liveConfig.get().diskNativeRadiusChunks));
-            getEntityStoreRegistry().registerSystem(new DiskStreamingSystems.After(streaming.disk()));
-            getLogger().atInfo().log("Experimental disk streaming enabled (native radius %d).", config.diskNativeRadiusChunks);
         }
 
         if (config.holdSpawnOnLoadingChunks) {

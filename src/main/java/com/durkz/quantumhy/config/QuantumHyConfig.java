@@ -46,15 +46,6 @@ public class QuantumHyConfig {
     /** Simulation radius in 32-block chunks, capped by the player's original native simulation radius. */
     public int simulationDistanceChunks = 4;
 
-    /**
-     * Keeps the player's view radius while native chunk loading stops at {@link #diskNativeRadiusChunks}; saved
-     * terrain beyond it is streamed from storage. Entities in those far chunks are not loaded. Requires a restart.
-     */
-    public boolean diskStreamingEnabled = true;
-
-    /** Native load ceiling with disk streaming. Pressure can tighten it, retaining a simulation + 1 margin. */
-    public int diskNativeRadiusChunks = 6;
-
     /** Detailed server log: one line per world per pass with each player's density and view decision. */
     public boolean verboseLog = false;
 
@@ -81,14 +72,14 @@ public class QuantumHyConfig {
     public int maxClientViewRadius = 32;
 
     /**
-     * Adapt terrain loading to density and streaming pressure. With DISK active this controls native
-     * residency while the disk band preserves the visible radius; otherwise it controls visible terrain.
+     * Allow the density controller to reduce terrain view radius during normal play. Enabled by
+     * default for the maximum-FPS profile; users can disable it to preserve visible terrain.
      */
     public boolean adaptiveTerrainViewEnabled = true;
 
     /**
-     * Allow emergency terrain relief. With DISK, server pressure adjusts residency and only sustained
-     * client loop delay can trim visibility. The protocol does not report client FPS or GPU usage.
+     * Allow a temporary terrain trim when server-visible entity or streaming pressure stays high.
+     * This is only a proxy for client load because the server does not receive client FPS metrics.
      */
     public boolean emergencyTerrainTrimEnabled = true;
 
@@ -179,8 +170,8 @@ public class QuantumHyConfig {
     public double densityRingEdgeWeight = 0.55D;
 
     /**
-     * Minimum shrink for entities and legacy non-DISK terrain. With DISK, terrain residency and
-     * visibility have no fixed floor. {@code 0} disables the entity and legacy terrain floor.
+     * Minimum shrink fraction even when density is "open". Keeps a light trim in normal exploration
+     * instead of sitting at full radius until a mob pile. {@code 0} disables the floor.
      */
     public double baselineShrinkFraction = 0.10D;
 
@@ -660,7 +651,6 @@ public class QuantumHyConfig {
 
     void applyDefaults() {
         simulationDistanceChunks = Math.clamp(simulationDistanceChunks, 2, 32);
-        diskNativeRadiusChunks = Math.clamp(diskNativeRadiusChunks, 3, 32);
         if (tickIntervalSeconds <= 0) {
             tickIntervalSeconds = 5;
         }

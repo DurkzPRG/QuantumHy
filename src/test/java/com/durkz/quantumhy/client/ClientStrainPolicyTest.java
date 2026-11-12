@@ -9,15 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ClientStrainPolicyTest {
 
     @Test
-    void terrainSignalRejectsNetworkBacklogAndUnknownQueue() {
-        assertEquals(1.0, ClientStrainPolicy.terrainScore(100, 25, 60, 0, 64, false));
-        assertEquals(0.0, ClientStrainPolicy.terrainScore(100, 25, 60, 0, 64, true));
-        assertEquals(0.0, ClientStrainPolicy.terrainScore(100, 25, 60, 65, 64, false));
-        assertEquals(0.0, ClientStrainPolicy.terrainScore(100, 25, 60, -1, 64, false));
-        assertEquals(0.0, ClientStrainPolicy.terrainScore(10, 25, 60, 0, 64, false));
-    }
-
-    @Test
     void frameLagIsTickMinusDirectAndNeverNegative() {
         assertEquals(30.0D, ClientStrainPolicy.frameLagMs(80_000L, 50_000L), 1e-9);
         assertEquals(0.0D, ClientStrainPolicy.frameLagMs(40_000L, 50_000L), 1e-9);

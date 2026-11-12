@@ -6,7 +6,6 @@ import com.durkz.quantumhy.client.CosmeticSmokeProfile;
 import com.durkz.quantumhy.effects.EffectBudgetFilter;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.config.PlayerPreferences;
-import com.durkz.quantumhy.disk.DiskStreamer;
 import com.durkz.quantumhy.pressure.GlobalLodPolicy;
 import com.durkz.quantumhy.pressure.PressureGovernor;
 import com.durkz.quantumhy.integration.LeanCoreBridge;
@@ -20,7 +19,6 @@ import com.durkz.quantumhy.view.SimulationDistanceController;
 import com.durkz.quantumhy.view.VisualLoadRegistry;
 import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
 import com.hypixel.hytale.server.core.modules.entity.tracker.EntityTrackerSystems;
-import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -58,7 +56,6 @@ public final class FpsRuntime {
     private final EffectBudgetFilter effects;
     private final CosmeticSmokeProfile cosmeticSmoke;
     private final ClientViewRadiusController controller;
-    private final DiskStreamer disk;
     private final StreamRateController stream;
     private final SimulationDistanceController simulation = new SimulationDistanceController();
     private final PressureGovernor pressure;
@@ -97,8 +94,7 @@ public final class FpsRuntime {
         this.strain = new ClientStrainMonitor(config.clientStrainEnabled);
         this.effects = new EffectBudgetFilter(plugin::activeConfig, preferences, strain);
         this.cosmeticSmoke = new CosmeticSmokeProfile(config.cosmeticSmokeBudgetEnabled, plugin.getLogger());
-        this.disk = config.diskStreamingEnabled ? new DiskStreamer() : null;
-        this.controller = new ClientViewRadiusController(config, renderCap, strain, disk);
+        this.controller = new ClientViewRadiusController(config, renderCap, strain);
         this.stream = new StreamRateController(config);
         this.pressure = new PressureGovernor(plugin);
         this.originalEntityLodRatio = EntityTrackerSystems.LODCull.ENTITY_LOD_RATIO;
@@ -480,17 +476,6 @@ public final class FpsRuntime {
         });
     }
 
-    /** Null unless disk streaming was enabled at startup. */
-    public DiskStreamer disk() {
-        return disk;
-    }
-
-    /** World thread. Disk streaming follows the player's optimization switch and QuantumHy's view ownership. */
-    public boolean diskWanted(PlayerRef player) {
-        return running && player != null && preferences.isOptimizationEnabled(player.getUuid())
-                && LeanCoreBridge.shouldQuantumHyWriteViewRadius(plugin.activeConfig());
-    }
-
     /** Shared with the inbound {@code ViewRadius} watcher registered by the plugin. */
     public ClientRenderCap renderCap() {
         return renderCap;
@@ -503,7 +488,6 @@ public final class FpsRuntime {
 
     public void onWorldJoin(UUID playerId, ChunkTracker incoming) {
         simulation.onWorldJoin(playerId, incoming);
-        if (disk != null) disk.forget(playerId);
         onWorldJoin(playerId);
     }
 
@@ -612,7 +596,6 @@ public final class FpsRuntime {
     }
 
     private void clearPlayerState(UUID playerId) {
-        if (disk != null) disk.forget(playerId);
         EntityCullSystem.forget(playerId);
         controller.forget(playerId);
         stream.forget(playerId);
@@ -645,10 +628,6 @@ public final class FpsRuntime {
             cosmeticSmoke.update(playerRef, requested);
             String reply;
             if (!requested) {
-                if (disk != null) {
-                    Player player = playerRef.getReference().getStore().getComponent(playerRef.getReference(), Player.getComponentType());
-                    disk.release(playerId, player);
-                }
                 controller.restoreOne(playerRef);
                 stream.restoreOne(playerRef);
                 simulation.restore(playerId, playerRef.getChunkTracker());
@@ -760,7 +739,6 @@ public final class FpsRuntime {
             pending.add(done);
             world.execute(() -> {
                 try {
-                    if (disk != null) disk.releaseWorld(world, batch);
                     controller.restoreAll(batch);
                     stream.restoreAll(batch);
                     simulation.restoreAll(batch);
@@ -814,7 +792,6 @@ public final class FpsRuntime {
     }
 
     private void clearAdaptiveState() {
-        if (disk != null) disk.close();
         simulation.clear();
         cosmeticSmoke.clear();
         pressure.clearSession();

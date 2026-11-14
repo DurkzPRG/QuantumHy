@@ -1,6 +1,7 @@
 package com.durkz.quantumhy;
 
 import com.durkz.quantumhy.command.QuantumCommand;
+import com.durkz.quantumhy.client.ClientInboundBridge;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.durkz.quantumhy.config.LiveConfig;
 import com.durkz.quantumhy.config.PlayerPreferences;
@@ -36,6 +37,7 @@ public class QuantumHyPlugin extends JavaPlugin {
     private PlayerPreferences playerPreferences;
     private FpsRuntime runtime;
     private PacketFilter inboundWatcher;
+    private ClientInboundBridge clientInboundBridge;
     private PacketFilter effectFilter;
     private LightingOptimizer lightingOptimizer;
 
@@ -74,7 +76,7 @@ public class QuantumHyPlugin extends JavaPlugin {
 
         if (config.clientRenderCapEnabled || config.clientStrainEnabled) {
             FpsRuntime watched = runtime;
-            inboundWatcher = PacketAdapters.registerInbound((PlayerPacketWatcher) (playerRef, packet) -> {
+            java.util.function.BiConsumer<PlayerRef, com.hypixel.hytale.protocol.Packet> observe = (playerRef, packet) -> {
                 if (playerRef == null) {
                     return;
                 }
@@ -83,6 +85,10 @@ public class QuantumHyPlugin extends JavaPlugin {
                 } else if (packet instanceof Pong pong) {
                     watched.strain().onPong(playerRef.getUuid(), pong);
                 }
+            };
+            clientInboundBridge = new ClientInboundBridge(observe, getLogger());
+            inboundWatcher = PacketAdapters.registerInbound((PlayerPacketWatcher) (playerRef, packet) -> {
+                if (!ClientInboundBridge.usesQuiche(playerRef)) observe.accept(playerRef, packet);
             });
         }
         if (config.effectBudgetEnabled) {
@@ -122,6 +128,7 @@ public class QuantumHyPlugin extends JavaPlugin {
         });
         getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, event -> {
             PlayerRef playerRef = event.getPlayerRef();
+            if (clientInboundBridge != null) clientInboundBridge.forget(playerRef.getUuid());
             ModUpdateChecker.getInstance().forgetPlayer(playerRef.getUuid());
             if (runtime != null) {
                 runtime.forgetPlayer(playerRef.getUuid());
@@ -130,7 +137,9 @@ public class QuantumHyPlugin extends JavaPlugin {
         getEventRegistry().registerGlobal(PlayerReadyEvent.class, event -> {
             var ref = event.getPlayerRef();
             if (runtime != null && ref != null && ref.isValid()) {
-                runtime.onPlayerReady(ref.getStore().getComponent(ref, PlayerRef.getComponentType()));
+                PlayerRef player = ref.getStore().getComponent(ref, PlayerRef.getComponentType());
+                if (clientInboundBridge != null) clientInboundBridge.attach(player);
+                runtime.onPlayerReady(player);
             }
         });
 
@@ -207,12 +216,20 @@ public class QuantumHyPlugin extends JavaPlugin {
         ModUpdateChecker.getInstance().start(this, config);
         if (runtime != null) {
             runtime.start();
+            if (clientInboundBridge != null) {
+                for (PlayerRef player : com.hypixel.hytale.server.core.universe.Universe.get().getPlayers())
+                    clientInboundBridge.attach(player);
+            }
         }
     }
 
     @Override
     protected void shutdown() {
         stopDevPerfMeterIfPresent();
+        if (clientInboundBridge != null) {
+            clientInboundBridge.close();
+            clientInboundBridge = null;
+        }
         if (lightingOptimizer != null) {
             lightingOptimizer.close();
             lightingOptimizer = null;

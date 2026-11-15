@@ -32,8 +32,6 @@ class VisualPressurePolicyTest {
     void emergencyUsesSeparateEntityAndBacklogBoundaries() {
         assertEquals(1.0D, VisualPressurePolicy.emergencyScore(1.5D, 0.0D), 1e-9);
         assertEquals(1.0D, VisualPressurePolicy.emergencyScore(0.0D, 2.0D), 1e-9);
-        assertEquals(0.5D, VisualPressurePolicy.emergencyTerrainFraction(1.0D), 1e-9);
-        assertEquals(1.0D, VisualPressurePolicy.emergencyTerrainFraction(2.0D), 1e-9);
     }
 
     @Test

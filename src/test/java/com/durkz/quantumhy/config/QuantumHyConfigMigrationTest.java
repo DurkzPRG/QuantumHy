@@ -118,10 +118,10 @@ class QuantumHyConfigMigrationTest {
         assertEquals(2, config.expandHysteresisPasses);
         assertEquals(8, config.worldPassBudgetMs);
         assertTrue(config.pressureExitRequiresLastTick);
-        assertTrue(config.adaptiveTerrainViewEnabled);
+        assertFalse(config.adaptiveTerrainViewEnabled);
         assertTrue(config.emergencyTerrainTrimEnabled);
-        assertEquals(9, config.configVersion);
-        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 9"));
+        assertEquals(10, config.configVersion);
+        assertTrue(Files.readString(dir.resolve("QuantumHy.json")).contains("\"configVersion\": 10"));
     }
 
     @Test
@@ -136,7 +136,7 @@ class QuantumHyConfigMigrationTest {
         assertEquals(5900, config.chunkLoadHighChunks);
         assertEquals(80, config.streamingBacklogThreshold);
         assertEquals(8, config.maxChunksPerTick);
-        assertEquals(9, config.configVersion);
+        assertEquals(10, config.configVersion);
     }
 
     @Test
@@ -148,7 +148,7 @@ class QuantumHyConfigMigrationTest {
         assertEquals(2800, config.chunkLoadLowChunks);
         assertEquals(5900, config.chunkLoadHighChunks);
         assertEquals(8, config.maxChunksPerTick);
-        assertEquals(9, config.configVersion);
+        assertEquals(10, config.configVersion);
     }
 
     @Test
@@ -168,7 +168,7 @@ class QuantumHyConfigMigrationTest {
         assertEquals(1, config.maxExpandChunksPerPass);
         assertEquals(2, config.expandHysteresisPasses);
         assertTrue(config.pressureExitRequiresLastTick);
-        assertEquals(9, config.configVersion);
+        assertEquals(10, config.configVersion);
     }
 
     @Test
@@ -176,30 +176,30 @@ class QuantumHyConfigMigrationTest {
         QuantumHyConfig config = QuantumHyConfig.load(dir);
 
         assertFalse(config.verboseLog);
-        assertEquals(9, config.configVersion);
+        assertEquals(10, config.configVersion);
         assertEquals(8, config.worldPassBudgetMs);
         assertEquals(1.0D, config.entityLodAggressiveness, 1e-9);
         assertFalse(config.holdSpawnOnLoadingChunks);
         assertFalse(config.pressureTrimClientEffects);
-        assertTrue(config.adaptiveTerrainViewEnabled);
+        assertFalse(config.adaptiveTerrainViewEnabled);
         assertTrue(config.emergencyTerrainTrimEnabled);
     }
 
     @Test
-    void v7MigrationRestoresMaximumFpsTerrainDefaults(@TempDir Path dir) throws Exception {
+    void v9MigrationPreservesViewDistanceOnce(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("QuantumHy.json"), """
                 {
                   "adaptiveTerrainViewEnabled": true,
                   "emergencyTerrainTrimEnabled": true,
-                  "configVersion": 7
+                  "configVersion": 9
                 }
                 """, StandardCharsets.UTF_8);
 
         QuantumHyConfig config = QuantumHyConfig.load(dir);
 
-        assertTrue(config.adaptiveTerrainViewEnabled);
+        assertFalse(config.adaptiveTerrainViewEnabled);
         assertTrue(config.emergencyTerrainTrimEnabled);
-        assertEquals(9, config.configVersion);
+        assertEquals(10, config.configVersion);
     }
 
     @Test
@@ -216,7 +216,7 @@ class QuantumHyConfigMigrationTest {
 
         assertFalse(config.adaptiveTerrainViewEnabled);
         assertFalse(config.emergencyTerrainTrimEnabled);
-        assertEquals(9, config.configVersion);
+        assertEquals(10, config.configVersion);
     }
 
     @Test
@@ -233,7 +233,7 @@ class QuantumHyConfigMigrationTest {
 
         assertEquals(2800, config.chunkLoadLowChunks);
         assertEquals(5900, config.chunkLoadHighChunks);
-        assertEquals(9, config.configVersion);
+        assertEquals(10, config.configVersion);
     }
 
     @Test
@@ -278,8 +278,8 @@ class QuantumHyConfigMigrationTest {
 
         QuantumHyConfig config = QuantumHyConfig.load(dir);
 
-        assertEquals(9, config.configVersion);
-        assertTrue(Files.readString(file).contains("\"configVersion\": 9"));
+        assertEquals(10, config.configVersion);
+        assertTrue(Files.readString(file).contains("\"configVersion\": 10"));
         try (var files = Files.list(dir)) {
             assertTrue(files.anyMatch(path -> path.getFileName().toString()
                     .startsWith("QuantumHy.json.corrupt.")));

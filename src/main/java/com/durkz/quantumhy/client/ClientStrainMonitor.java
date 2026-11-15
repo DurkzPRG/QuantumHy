@@ -82,18 +82,27 @@ public final class ClientStrainMonitor {
                 queue, config.clientStrainQueueLow, config.clientStrainQueueHigh, backpressure);
         state.ema = ClientStrainPolicy.ema(state.ema, score, state.hasEma);
         state.hasEma = true;
+        state.highStreak = ClientStrainPolicy.nextHighStreak(state.ema, state.highStreak);
         state.counter = ClientStrainPolicy.nextCounter(state.strained, state.ema, state.counter);
         if (ClientStrainPolicy.flips(state.strained, state.counter)) {
             state.strained = !state.strained;
             state.counter = 0;
         }
         state.published = state.strained ? state.ema : 0.0D;
+        state.terrainPublished = state.strained && ClientStrainPolicy.sustained(state.highStreak)
+                ? state.ema : 0.0D;
     }
 
     /** Strain in {@code [0, 1]} while the player is strained, else {@code 0}. */
     public double strain(@Nullable UUID playerId) {
         State state = playerId == null ? null : players.get(playerId);
         return state == null ? 0.0D : state.published;
+    }
+
+    /** Strain while it has held long enough to trim terrain, else {@code 0}. */
+    public double terrainStrain(@Nullable UUID playerId) {
+        State state = playerId == null ? null : players.get(playerId);
+        return state == null ? 0.0D : state.terrainPublished;
     }
 
     public boolean strained(@Nullable UUID playerId) {
@@ -123,6 +132,7 @@ public final class ClientStrainMonitor {
     private static final class State {
         final PongPairTracker pongs = new PongPairTracker();
         volatile double published;
+        volatile double terrainPublished;
         volatile double frameLagMs;
         long lastSequence;
         long lastTickSequence;
@@ -130,9 +140,12 @@ public final class ClientStrainMonitor {
         boolean hasEma;
         boolean strained;
         int counter;
+        int highStreak;
 
         void reset() {
             published = 0.0D;
+            terrainPublished = 0.0D;
+            highStreak = 0;
             frameLagMs = 0.0D;
             ema = 0.0D;
             hasEma = false;

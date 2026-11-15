@@ -30,7 +30,7 @@ public class QuantumHyConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /** Bumped when shipped defaults change; older QuantumHy.json files migrate on load. */
-    private static final int CURRENT_CONFIG_VERSION = 9;
+    private static final int CURRENT_CONFIG_VERSION = 10;
 
     private transient File configFile;
 
@@ -72,14 +72,14 @@ public class QuantumHyConfig {
     public int maxClientViewRadius = 32;
 
     /**
-     * Allow the density controller to reduce terrain view radius during normal play. Enabled by
-     * default for the maximum-FPS profile; users can disable it to preserve visible terrain.
+     * Let the density controller trim terrain view radius during normal play, even while the client
+     * keeps up. Off by default so the player's view distance is respected.
      */
-    public boolean adaptiveTerrainViewEnabled = true;
+    public boolean adaptiveTerrainViewEnabled = false;
 
     /**
-     * Allow a temporary terrain trim when server-visible entity or streaming pressure stays high.
-     * This is only a proxy for client load because the server does not receive client FPS metrics.
+     * Allow a temporary terrain trim while the client's loop stays measurably delayed, or LeanCore
+     * reports memory pressure. The radius ramps back to the player's setting once that clears.
      */
     public boolean emergencyTerrainTrimEnabled = true;
 
@@ -603,12 +603,12 @@ public class QuantumHyConfig {
             notes.add("pressureExitRequiresLastTick=true");
         }
 
-        // Version 7 temporarily shipped terrain preservation as the default during benchmarking.
-        // Version 8 restores maximum FPS once; explicit choices are preserved after this migration.
-        if (!json.has("adaptiveTerrainViewEnabled") || configVersion < 8) {
-            adaptiveTerrainViewEnabled = true;
+        // Version 10 stops trimming terrain while the client keeps up. Applied once; later explicit
+        // choices are preserved.
+        if (!json.has("adaptiveTerrainViewEnabled") || configVersion < 10) {
+            adaptiveTerrainViewEnabled = false;
             changed = true;
-            notes.add("adaptiveTerrainViewEnabled=true");
+            notes.add("adaptiveTerrainViewEnabled=false");
         }
         if (!json.has("emergencyTerrainTrimEnabled") || configVersion < 8) {
             emergencyTerrainTrimEnabled = true;

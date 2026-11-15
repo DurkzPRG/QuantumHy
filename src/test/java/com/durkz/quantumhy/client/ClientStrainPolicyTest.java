@@ -51,6 +51,21 @@ class ClientStrainPolicyTest {
     }
 
     @Test
+    void terrainNeedsSustainedStrainAndAnyDipResetsIt() {
+        int streak = 0;
+        for (int i = 0; i < ClientStrainPolicy.TERRAIN_SUSTAIN_SAMPLES - 1; i++) {
+            streak = ClientStrainPolicy.nextHighStreak(0.8D, streak);
+        }
+        assertFalse(ClientStrainPolicy.sustained(streak));
+        streak = ClientStrainPolicy.nextHighStreak(0.4D, streak);
+        assertEquals(0, streak);
+        for (int i = 0; i < ClientStrainPolicy.TERRAIN_SUSTAIN_SAMPLES; i++) {
+            streak = ClientStrainPolicy.nextHighStreak(ClientStrainPolicy.ENTER, streak);
+        }
+        assertTrue(ClientStrainPolicy.sustained(streak));
+    }
+
+    @Test
     void terrainTakesHalfTheStrainEntitiesTakeAll() {
         assertEquals(0.8D, ClientStrainPolicy.entityFraction(0.8D), 1e-9);
         assertEquals(0.4D, ClientStrainPolicy.terrainFraction(0.8D), 1e-9);

@@ -21,6 +21,12 @@ public final class ClientStrainPolicy {
     public static final int EXIT_SAMPLES = 10;
     /** Share of the strain applied to terrain; entities take the full value. */
     public static final double TERRAIN_SHARE = 0.5D;
+    /**
+     * Consecutive samples the EMA must stay at or above {@link #ENTER} before terrain is trimmed.
+     * Join and chunk-load spikes are short; trimming and restoring terrain for them only makes the
+     * client reload the outer ring.
+     */
+    public static final int TERRAIN_SUSTAIN_SAMPLES = 10;
 
     private ClientStrainPolicy() {
     }
@@ -55,6 +61,16 @@ public final class ClientStrainPolicy {
             return ema >= ENTER ? Math.max(0, counter) + 1 : 0;
         }
         return ema <= EXIT ? Math.min(0, counter) - 1 : 0;
+    }
+
+    /** Consecutive samples with the EMA at or above {@link #ENTER}. */
+    public static int nextHighStreak(double ema, int streak) {
+        return ema >= ENTER ? streak + 1 : 0;
+    }
+
+    /** True once strain has held long enough to justify a terrain trim. */
+    public static boolean sustained(int highStreak) {
+        return highStreak >= TERRAIN_SUSTAIN_SAMPLES;
     }
 
     public static boolean flips(boolean strained, int counter) {

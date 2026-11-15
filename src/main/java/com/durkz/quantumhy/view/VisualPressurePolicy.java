@@ -36,14 +36,6 @@ public final class VisualPressurePolicy {
         return smoothstep(entityRatio, 1.0D, 2.0D);
     }
 
-    /** Emergency terrain starts at half strength at entry and reaches full strength at 2x entry. */
-    public static double emergencyTerrainFraction(double emergencyScore) {
-        if (emergencyScore <= 0.0D) {
-            return 0.0D;
-        }
-        return Math.min(1.0D, 0.5D * emergencyScore);
-    }
-
     public static double ema(double previous, double sample, double alpha, boolean hasPrevious) {
         if (!hasPrevious) {
             return sample;

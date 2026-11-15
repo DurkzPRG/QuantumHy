@@ -222,6 +222,10 @@ public class QuantumCommand extends AbstractCommandCollection {
         send(ctx, String.format(Locale.ROOT, "distant updates: %s near=%db far=%db",
                 config.distantUpdateThrottleEnabled ? "throttled (experimental)" : "off",
                 config.distantUpdateNearBlocks, config.distantUpdateFarBlocks), "#AAAAAA");
+        send(ctx, String.format(Locale.ROOT, "buried sections: %s near=%dch replaced=%d restored=%d",
+                config.buriedSectionStandInsEnabled ? "stand-ins" : "off", config.buriedSectionNearChunks,
+                com.durkz.quantumhy.view.BuriedSectionFilter.REPLACED.sum(),
+                com.durkz.quantumhy.view.BuriedSectionFilter.RESTORED.sum()), "#AAAAAA");
         send(ctx, "online players: " + snap.onlineCount(), "#AAAAAA");
         if (snap.players().isEmpty()) {
             send(ctx, "runtime data: awaiting first pass", "#AAAAAA");

@@ -39,6 +39,8 @@ public class QuantumHyPlugin extends JavaPlugin {
     private PacketFilter inboundWatcher;
     private ClientInboundBridge clientInboundBridge;
     private PacketFilter effectFilter;
+    private PacketFilter buriedFilter;
+    private com.durkz.quantumhy.view.BuriedSectionFilter buriedSections;
     private LightingOptimizer lightingOptimizer;
 
     public QuantumHyPlugin(@NonNullDecl JavaPluginInit init) {
@@ -94,6 +96,11 @@ public class QuantumHyPlugin extends JavaPlugin {
         if (config.effectBudgetEnabled) {
             effectFilter = PacketAdapters.registerOutbound(runtime.effects());
         }
+        if (config.buriedSectionStandInsEnabled) {
+            buriedSections = new com.durkz.quantumhy.view.BuriedSectionFilter(liveConfig, playerPreferences);
+            buriedFilter = PacketAdapters.registerOutbound(buriedSections);
+            getEntityStoreRegistry().registerSystem(buriedSections.restorer());
+        }
 
         if (config.distantUpdateThrottleEnabled) {
             getEntityStoreRegistry().registerSystem(new com.durkz.quantumhy.view.DistantUpdateThrottleSystem(
@@ -118,6 +125,7 @@ public class QuantumHyPlugin extends JavaPlugin {
             PlayerRef playerRef = event.getHolder().getComponent(PlayerRef.getComponentType());
             if (playerRef != null) {
                 EntityCullSystem.forget(playerRef.getUuid());
+                if (buriedSections != null) buriedSections.forget(playerRef.getUuid());
                 com.durkz.quantumhy.view.VisualLoadRegistry.remove(playerRef.getUuid());
                 if (runtime != null) {
                     runtime.onWorldJoin(playerRef.getUuid(), event.getHolder().getComponent(
@@ -129,6 +137,7 @@ public class QuantumHyPlugin extends JavaPlugin {
         getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, event -> {
             PlayerRef playerRef = event.getPlayerRef();
             if (clientInboundBridge != null) clientInboundBridge.forget(playerRef.getUuid());
+            if (buriedSections != null) buriedSections.forget(playerRef.getUuid());
             ModUpdateChecker.getInstance().forgetPlayer(playerRef.getUuid());
             if (runtime != null) {
                 runtime.forgetPlayer(playerRef.getUuid());
@@ -241,6 +250,13 @@ public class QuantumHyPlugin extends JavaPlugin {
             } catch (IllegalArgumentException alreadyGone) {
             }
             inboundWatcher = null;
+        }
+        if (buriedFilter != null) {
+            try {
+                PacketAdapters.deregisterOutbound(buriedFilter);
+            } catch (IllegalArgumentException alreadyGone) {
+            }
+            buriedFilter = null;
         }
         if (effectFilter != null) {
             try {

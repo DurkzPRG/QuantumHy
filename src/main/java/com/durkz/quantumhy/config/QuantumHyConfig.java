@@ -135,6 +135,17 @@ public class QuantumHyConfig {
     public int effectMaxDistance = 0;
 
     /**
+     * Send a plain stone section in place of terrain buried under the surface, below the player and
+     * outside {@link #buriedSectionNearChunks}. Caves, ores, lava and aquifers there are hidden by the
+     * ground above, so the view is unchanged while the client skips decoding and meshing them. The
+     * real section is sent again as the player gets close or drops toward it. Restart required.
+     */
+    public boolean buriedSectionStandInsEnabled = true;
+
+    /** Columns within this many chunks of the player always get their real sections. */
+    public int buriedSectionNearChunks = 4;
+
+    /**
      * Experimental. Send position-only updates of distant entities less often: every tick within
      * {@link #distantUpdateNearBlocks}, every 2nd tick up to {@link #distantUpdateFarBlocks}, every 4th
      * beyond (doubled for a strained client). The latest position is always delivered, only later.

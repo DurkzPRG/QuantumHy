@@ -142,7 +142,7 @@ public class QuantumHyConfig {
      */
     public boolean buriedSectionStandInsEnabled = true;
 
-    /** Columns within this many chunks of the player always get their real sections. */
+    /** Columns within this many chunks of the player get real sections down to 48 blocks below them. */
     public int buriedSectionNearChunks = 4;
 
     /**

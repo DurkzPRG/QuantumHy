@@ -40,16 +40,16 @@ import java.util.function.Supplier;
 
 /**
  * Sends a uniform stone section in place of terrain the player cannot see: sections buried under
- * the surface, below the player and outside the near ring (see {@link BuriedSectionPolicy}).
+ * the surface and far enough below the player (see {@link BuriedSectionPolicy}).
  *
  * The client only draws a column once every section has arrived, so sections are swapped, never
  * dropped. The stand-in costs a few bytes and no meshing, while a real deep section carries caves,
  * ores, lava and aquifers the client would decode, mesh and keep in memory.
  *
  * The engine still thinks the real section was sent. {@link Restorer} asks the chunk tracker to
- * resend it ({@code removeForReload}) once the player comes within the near ring or drops close to
- * it, and this filter then lets the real packets through. Section packets are written one by one
- * through the single-packet path, so dropping one never leaves a hole in a batch.
+ * resend it ({@code removeForReload}) once the player comes within the near ring above it or drops
+ * close to it, and this filter then lets the real packets through. Section packets are written one
+ * by one through the single-packet path, so dropping one never leaves a hole in a batch.
  */
 public final class BuriedSectionFilter implements PlayerPacketFilter {
 

@@ -5,17 +5,22 @@ package com.durkz.quantumhy.view;
  * No Hytale types.
  *
  * A section qualifies when every block column around it has terrain above the section's top
- * (the lowest surface of its own column and the known neighbours, minus a margin), the section is
- * below the player, and it is farther than the near ring. Caves and ores inside it are hidden by
- * the terrain above, so a uniform stone section looks the same from the surface.
+ * (the lowest surface of its own column and the known neighbours, minus a margin) and it is below
+ * the player: by {@link #BELOW_PLAYER} outside the near ring, by {@link #NEAR_DEPTH} inside it.
+ * Caves and ores inside it are hidden by the terrain above, so a uniform stone section looks the
+ * same from the surface. Open shafts and ravines lower the heightmap and so stay real; what is left
+ * deep under the near ring can only be seen through roofed caves.
  */
 public final class BuriedSectionPolicy {
 
     /** Blocks of terrain required above the section's top. */
     public static final int SURFACE_MARGIN = 2;
 
-    /** The section's top must be this many blocks below the player's feet. */
+    /** Outside the near ring, the section's top must be this many blocks below the player's feet. */
     public static final int BELOW_PLAYER = 16;
+
+    /** Inside the near ring, the section's top must be this many blocks below the player's feet. */
+    public static final int NEAR_DEPTH = 48;
 
     /** Section height in blocks. */
     public static final int SECTION_BLOCKS = 32;
@@ -34,11 +39,11 @@ public final class BuriedSectionPolicy {
      * {@code ringDistance} is the Chebyshev distance in chunks from the player's column.
      */
     public static boolean replace(int sectionY, int surfaceFloor, double playerY, int ringDistance, int nearChunks) {
-        if (surfaceFloor == Integer.MIN_VALUE || ringDistance <= nearChunks) {
+        if (surfaceFloor == Integer.MIN_VALUE) {
             return false;
         }
         int top = topY(sectionY);
-        return top < surfaceFloor - SURFACE_MARGIN && keepHidden(sectionY, playerY);
+        return top < surfaceFloor - SURFACE_MARGIN && !restore(sectionY, playerY, ringDistance, nearChunks);
     }
 
     /** False once the player is close enough above, or below, to see into the section. */
@@ -48,7 +53,8 @@ public final class BuriedSectionPolicy {
 
     /** True while a replaced section must be swapped back for the real one. */
     public static boolean restore(int sectionY, double playerY, int ringDistance, int nearChunks) {
-        return ringDistance <= nearChunks || !keepHidden(sectionY, playerY);
+        return !keepHidden(sectionY, playerY)
+                || ringDistance <= nearChunks && topY(sectionY) >= playerY - NEAR_DEPTH;
     }
 
     /** Lowest value of a column heightmap, or {@link Integer#MIN_VALUE} when empty. */

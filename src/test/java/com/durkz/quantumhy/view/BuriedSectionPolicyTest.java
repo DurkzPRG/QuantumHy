@@ -15,9 +15,14 @@ class BuriedSectionPolicyTest {
     }
 
     @Test
-    void nearRingAlwaysGetsRealSections() {
+    void nearRingGetsRealSectionsDownToNearDepth() {
+        // Player at 124: section 2 (top 95) is within 48 blocks, section 1 (top 63) is not.
         assertFalse(BuriedSectionPolicy.replace(2, 110, 124.0, 4, 4));
         assertTrue(BuriedSectionPolicy.restore(2, 124.0, 3, 4));
+        assertTrue(BuriedSectionPolicy.replace(1, 110, 124.0, 0, 4));
+        assertFalse(BuriedSectionPolicy.restore(1, 124.0, 0, 4));
+        // Walking down to 111 brings section 1 within reach (63 >= 111 - 48).
+        assertTrue(BuriedSectionPolicy.restore(1, 111.0, 2, 4));
     }
 
     @Test

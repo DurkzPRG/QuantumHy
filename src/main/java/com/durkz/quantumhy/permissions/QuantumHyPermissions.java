@@ -1,5 +1,6 @@
 package com.durkz.quantumhy.permissions;
 
+import com.hypixel.hytale.server.core.modules.singleplayer.SingleplayerModule;
 import com.hypixel.hytale.server.core.permissions.PermissionsModule;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 
@@ -15,9 +16,21 @@ public final class QuantumHyPermissions {
         PermissionsModule.registerPermission(ADMIN);
     }
 
-    /** Update notices are operational information, so only operators and explicit admins receive them. */
+    /** Update notices go to operators, explicit admins and the owner of a singleplayer world. */
     public static boolean canReceiveUpdateNotice(PlayerRef playerRef) {
-        return isAdmin(playerRef);
+        return isAdmin(playerRef) || isWorldOwner(playerRef);
+    }
+
+    /** The player who opened a singleplayer world. Always false on a dedicated server. */
+    static boolean isWorldOwner(PlayerRef playerRef) {
+        if (playerRef == null || playerRef.getUuid() == null) {
+            return false;
+        }
+        try {
+            return SingleplayerModule.isOwner(playerRef.getUuid());
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     public static boolean isAdmin(PlayerRef playerRef) {

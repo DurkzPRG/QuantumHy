@@ -14,6 +14,8 @@ you are.
   backlog, visible entity pressure, and server MSPT instead.
 - `/q optimize off` disables every per-player lever for that player. Explicit server-wide admin
   controls such as world levers, spawn pause, and global LOD still affect the whole world.
+- Right after a long drop into a cave, the client rebuilds the terrain it had as stone. That can
+  cost a hitch or two before it settles.
 
 ## How it actually works
 
@@ -31,11 +33,13 @@ Two honest limits:
 ## What it does
 
 Every few seconds it checks how crowded the area around each player is (lots of entities means
-expensive to render) and turns that into one shrink factor for two levers: chunk view radius and
-entity stream radius.
+expensive to render) and shrinks the entity stream radius to match. Your chunk view radius stays
+where you set it. Terrain only gets trimmed after about 10 seconds of the client clearly falling
+behind, or while LeanCore reports memory pressure. If you want crowds to pull the view in as well,
+set `adaptiveTerrainViewEnabled` to `true`.
 
-- Packed area: both levers pull in toward the minimum. At full shrink the entity radius drops to
-  the floor in one pass, not over many ticks.
+- Packed area: the entity radius pulls in toward the minimum. At full shrink it drops to the floor
+  in one pass, not over many ticks.
 - Out in the open: expand is allowed only after load has been calm for a couple of passes, at least
   half the density scan is loaded, you are not flying, and the world is not hitching. Radius never
   jumps from min to full in one pass (at most +1 chunk per check).
@@ -52,6 +56,15 @@ instead of in one burst that makes the client hitch. That's the `smoothChunkStre
 
 On top of the radius it also:
 
+- Sends terrain buried under the surface as plain stone until you get close
+  (`buriedSectionStandInsEnabled`). Caves, ores and lava under your feet are hidden by the ground
+  anyway, so the view looks the same while the client skips building them. The real terrain comes
+  back as you walk up to it or drop toward it.
+- Runs the engine's light propagation through reusable buffers (`denseLightingEnabled`). On a
+  server build it doesn't recognize, the native lighting stays.
+- Keeps every visible chunk but limits simulation to 4 chunks around each player
+  (`simulationDistanceEnabled`). Gameplay further out pauses until someone gets closer.
+- Swaps goblin pipe smoke for a lighter copy with the same reach (`cosmeticSmokeBudgetEnabled`).
 - Caps the client's own draw distance and fog to the trimmed radius, so the client actually stops
   drawing what the server stopped sending (`clientRenderCapEnabled`).
 - Watches how fast each client answers the server and how many packets it has queued. A client
@@ -68,9 +81,14 @@ QuantumHy treats anyone else.
 
 ## Performance
 
-I played the same session twice on Hytale 0.7.0: once without QuantumHy, once with 0.4.0 on its
-default config. Same world, same path, same client settings, same PC. Frame times come straight
-from the Hytale client, captured with PresentMon (the capture tool inside CapFrameX).
+I walked the same route three times on Hytale 0.7.7: without QuantumHy, with 0.4.0 and with
+0.5.0. Same world, same path, same client settings (view distance 18), same PC, one game session,
+no screen recorder running. Frame times come straight from the Hytale client, captured with
+CapFrameX.
+
+0.5.0 ran its default config. 0.4.0 ran with terrain adaptation off (`adaptiveTerrainViewEnabled`
+and `emergencyTerrainTrimEnabled` set to `false`), so all three runs drew the same 18 chunks and
+the only difference is what each version does at that view distance.
 
 ### Test PC
 
@@ -80,31 +98,27 @@ from the Hytale client, captured with PresentMon (the capture tool inside CapFra
 | GPU | NVIDIA GeForce GTX 1650 4GB |
 | RAM | 16 GB (2×8 GB) |
 
-### What I did in each part
+### The route
 
-- **Fast flight (60 s):** flew in a straight line over terrain nobody had loaded yet, much faster
-  than you can sprint, so new chunks have to be generated and sent the whole time.
-- **Mob crowd (90 s):** stopped and spawned about 150 animals around me (sheep, cows, pigs, goats,
-  chickens, boars).
-- **Effects (60 s):** stayed on the crowd and spammed explosions, fire and hit particles on top of it.
-- **Circling (60 s):** flew laps around the crowd with lighter effects still going, so the camera
-  keeps sweeping across the mobs.
-- **Flight back (60 s):** flew back the same way I came.
+- **Deck (55 s):** walked down a long deck with fire, explosions and animals on both sides.
+- **Drop + cave (40 s):** dropped down a shaft into a cave and walked a long corridor through it.
+- **Ramp (24 s):** climbed a ramp back up to the surface.
+- **Surface (27 s):** walked a path on the surface to the end.
 
 ### Results
 
-| Part | Without QuantumHy (avg / 1% low) | QuantumHy 0.4.0 (avg / 1% low) | Frames over 50 ms |
-| --- | ---: | ---: | ---: |
-| Fast flight | 65 / 7 | 142 / 48 | 40 → 1 |
-| Mob crowd | 75 / 21 | 128 / 73 | 6 → 0 |
-| Effects | 76 / 41 | 121 / 79 | 0 → 0 |
-| Circling | 54 / 19 | 115 / 58 | 12 → 0 |
-| Flight back | 58 / 15 | 107 / 42 | 30 → 1 |
-| **Whole session** | **66 / 14** | **123 / 56** | **88 → 2** |
+| Part | Without QuantumHy (avg / 1% low) | QuantumHy 0.4.0 (avg / 1% low) | QuantumHy 0.5.0 (avg / 1% low) | Frames over 50 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Deck | 88 / 15 | 91 / 19 | 106 / 70 | 12 / 7 / 0 |
+| Drop + cave | 109 / 22 | 107 / 16 | 117 / 34 | 3 / 9 / 3 |
+| Ramp | 104 / 25 | 110 / 20 | 113 / 39 | 1 / 4 / 1 |
+| Surface | 82 / 24 | 85 / 35 | 106 / 52 | 1 / 0 / 0 |
+| **Whole run** | **95 / 19** | **97 / 19** | **110 / 45** | **17 / 20 / 4** |
 
 1% low is the average of the slowest 1% of frames, the number that tells you how bad the stutters get.
+Frames over 50 ms are listed as without / 0.4.0 / 0.5.0.
 
-![FPS over the whole session](docs/benchmark/fps-timeline.png)
+![FPS along the route](docs/benchmark/fps-timeline.png)
 
 ![Average FPS and 1% low per part](docs/benchmark/fps-summary.png)
 
@@ -112,12 +126,13 @@ from the Hytale client, captured with PresentMon (the capture tool inside CapFra
 
 ### Where the frames come from
 
-- Without QuantumHy the client drew a view of 24 chunks and got every mob within 768 blocks. With
-  QuantumHy it settled at 12 chunks and mobs within 48 blocks (about 190 visible entities down to
-  about 50). That is the trade: you see less far, and the crowd stops costing you frames.
-- In the fast flight the edge of the view loads a little behind you, because nobody moves that
-  fast in survival. Normal sprinting (7 blocks/s) is well inside what the chunk stream keeps up with.
-- One session per setup, so differences under ~5% would be noise. The gaps above are not.
+- Same view distance in all three runs, so none of this comes from seeing less. Most of the 0.5.0
+  lead comes from the client not building the buried terrain under the route. Turning
+  `buriedSectionStandInsEnabled` off in a separate test took most of it away.
+- Frames over 100 ms went from 14 without QuantumHy and 19 with 0.4.0 down to 1 with 0.5.0. A
+  second 0.5.0 run gave 3.
+- One run per setup, so differences under ~5% would be noise. The gaps in 1% low and stutters are
+  not.
 
 ## Config
 
@@ -133,7 +148,7 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `targetClientViewRadius` | `0` | Hard cap in chunks. `0` means no cap, just adapt. |
 | `minClientViewRadius` | `6` | Never pull anyone below this. |
 | `maxClientViewRadius` | `32` | Ceiling for the hard cap (your own view radius still wins). |
-| `adaptiveTerrainViewEnabled` | `true` | Adapt terrain view radius during normal play. |
+| `adaptiveTerrainViewEnabled` | `false` | Let crowds trim the terrain view radius during normal play. Off so your view distance is respected. |
 | `emergencyTerrainTrimEnabled` | `true` | Allow temporary terrain trim after sustained visual pressure. |
 | `clientRenderCapEnabled` | `true` | Cap the client's draw distance and fog to the trimmed radius. Restart required. |
 | `clientStrainEnabled` | `true` | Ease the radius and chunk rate for a client that falls behind. Restart required. |
@@ -146,6 +161,12 @@ Lives in `QuantumHy.json` in the plugin data folder, created on first run.
 | `effectProtectRadius` | `16` | Effects within this many blocks are never dropped. |
 | `effectSoftRadius` | `48` | Once half the budget is spent, effects beyond this are dropped first. |
 | `effectMaxDistance` | `0` | Hard cut-off in blocks for positional effects. `0` = budget only. |
+| `buriedSectionStandInsEnabled` | `true` | Send buried terrain below you as plain stone until you get close. Restart required. |
+| `buriedSectionNearChunks` | `4` | Columns within this many chunks get real terrain down to 48 blocks below you. |
+| `denseLightingEnabled` | `true` | Run native light propagation through reusable buffers. Restart required. |
+| `simulationDistanceEnabled` | `true` | Keep visible terrain but limit simulation around each player. |
+| `simulationDistanceChunks` | `4` | Simulation radius in chunks, capped by the player's own simulation radius. |
+| `cosmeticSmokeBudgetEnabled` | `true` | Use a lighter copy of goblin pipe smoke with the same reach. Restart required. |
 | `distantUpdateThrottleEnabled` | `false` | Send position updates for far entities less often. The latest position always arrives. Restart required. |
 | `distantUpdateNearBlocks` | `32` | Entities closer than this get every update. |
 | `distantUpdateFarBlocks` | `64` | Entities beyond this get every 4th update. |

@@ -4,6 +4,7 @@ import com.durkz.quantumhy.config.PlayerPreferences;
 import com.durkz.quantumhy.config.QuantumHyConfig;
 import com.hypixel.hytale.component.ArchetypeChunk;
 import com.hypixel.hytale.component.CommandBuffer;
+import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.tick.EntityTickingSystem;
@@ -11,6 +12,7 @@ import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.protocol.CachedPacket;
 import com.hypixel.hytale.protocol.Packet;
+import com.hypixel.hytale.protocol.ToClientPacket;
 import com.hypixel.hytale.protocol.packets.world.SetChunk;
 import com.hypixel.hytale.protocol.packets.world.SetColumn;
 import com.hypixel.hytale.protocol.packets.world.SetFluids;
@@ -21,11 +23,13 @@ import com.hypixel.hytale.server.core.modules.entity.player.ChunkTracker;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.chunk.section.BlockSection;
 import com.hypixel.hytale.server.core.universe.world.chunk.section.FluidSection;
+import com.hypixel.hytale.server.core.universe.world.storage.ChunkStore;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.netty.buffer.ByteBuf;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
 
 import javax.annotation.Nonnull;
@@ -33,6 +37,7 @@ import javax.annotation.Nullable;
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
@@ -46,10 +51,13 @@ import java.util.function.Supplier;
  * dropped. The stand-in costs a few bytes and no meshing, while a real deep section carries caves,
  * ores, lava and aquifers the client would decode, mesh and keep in memory.
  *
- * The engine still thinks the real section was sent. {@link Restorer} asks the chunk tracker to
- * resend it ({@code removeForReload}) once the player comes within the near ring above it or drops
- * close to it, and this filter then lets the real packets through. Section packets are written one
- * by one through the single-packet path, so dropping one never leaves a hole in a batch.
+ * The engine still thinks the real section was sent. Once the player comes within the near ring
+ * above it or drops close to it, {@link Restorer} swaps it back, nearest first. Near-ring sections
+ * are written directly from the server's cached packets: the tracker's reload path waits behind
+ * everything a fall streams in, long enough for the player to walk into the stand-in. Farther
+ * sections go through the tracker ({@code removeForReload}) a few per pass, because a drop into a
+ * cave frees thousands of them at once and the client remeshes every one. Section packets are
+ * written one by one through the single-packet path, so dropping one never leaves a hole in a batch.
  */
 public final class BuriedSectionFilter implements PlayerPacketFilter {
 
@@ -139,6 +147,18 @@ public final class BuriedSectionFilter implements PlayerPacketFilter {
             REPLACED.increment();
         }
         return true;
+    }
+
+    private static void write(PlayerRef playerRef, @Nullable ToClientPacket packet) {
+        if (packet == null) {
+            return;
+        }
+        WRITING.set(Boolean.TRUE);
+        try {
+            playerRef.getPacketHandler().write(packet);
+        } finally {
+            WRITING.set(Boolean.FALSE);
+        }
     }
 
     /** Clears everything known about a player; their next column packets start fresh. */
@@ -288,9 +308,15 @@ public final class BuriedSectionFilter implements PlayerPacketFilter {
      */
     public final class Restorer extends EntityTickingSystem<EntityStore> {
         private static final int EVERY_TICKS = 6;
+        /** Near-ring sections the player can walk into, written directly each pass. */
+        static final int MAX_NEAR_PER_PASS = 64;
+        /** Sections outside the near ring, handed to the tracker each pass. */
+        static final int MAX_FAR_PER_PASS = 8;
         private final Query<EntityStore> query = Query.and(PlayerRef.getComponentType(),
                 Player.getComponentType(), ChunkTracker.getComponentType());
         private final IntArrayList reloads = new IntArrayList();
+        private final IntArrayList candidates = new IntArrayList();
+        private final LongArrayList order = new LongArrayList();
 
         @Override
         public Query<EntityStore> getQuery() {
@@ -320,12 +346,15 @@ public final class BuriedSectionFilter implements PlayerPacketFilter {
             double py = transform.getPosition().y;
             int pcx = (int) Math.floor(transform.getPosition().x) >> 5;
             int pcz = (int) Math.floor(transform.getPosition().z) >> 5;
+            int pcy = (int) Math.floor(py) >> 5;
             int near = settings.get().buriedSectionNearChunks;
             boolean optedOut = !preferences.isOptimizationEnabled(playerRef.getUuid());
             int forgetBeyond = Math.max(player.getViewRadius(), 1) + 3;
             // The engine writes section packets (and so runs this filter) while holding the tracker's
             // lock, so removeForReload must never be called while holding the state lock.
             reloads.clear();
+            candidates.clear();
+            order.clear();
             synchronized (state) {
                 ObjectIterator<Long2IntMap.Entry> it = state.replaced.long2IntEntrySet().fastIterator();
                 while (it.hasNext()) {
@@ -340,30 +369,72 @@ public final class BuriedSectionFilter implements PlayerPacketFilter {
                         continue;
                     }
                     int bits = entry.getIntValue();
-                    int keep = bits;
                     for (int y = 0; bits != 0; y++, bits >>>= 1) {
                         if ((bits & 1) != 0 && (optedOut || BuriedSectionPolicy.restore(y, py, ring, near))) {
-                            reloads.add(x);
-                            reloads.add(y);
-                            reloads.add(z);
-                            keep &= ~(1 << y);
+                            int distance = Math.max(ring, Math.abs(y - pcy));
+                            order.add((long) distance << 32 | candidates.size() / 3);
+                            candidates.add(x);
+                            candidates.add(y);
+                            candidates.add(z);
                         }
                     }
-                    if (keep == 0) {
-                        it.remove();
-                    } else if (keep != entry.getIntValue()) {
-                        entry.setValue(keep);
+                }
+                Arrays.sort(order.elements(), 0, order.size());
+                int nearLeft = MAX_NEAR_PER_PASS;
+                int farLeft = MAX_FAR_PER_PASS;
+                for (int i = 0; i < order.size() && (nearLeft > 0 || farLeft > 0); i++) {
+                    int at = (int) order.getLong(i) * 3;
+                    int x = candidates.getInt(at);
+                    int y = candidates.getInt(at + 1);
+                    int z = candidates.getInt(at + 2);
+                    boolean nearby = BuriedSectionPolicy.ring(x, z, pcx, pcz) <= near;
+                    if (nearby ? nearLeft-- <= 0 : farLeft-- <= 0) {
+                        continue;
                     }
+                    long column = key(x, z);
+                    int keep = state.replaced.get(column) & ~(1 << y);
+                    if (keep == 0) {
+                        state.replaced.remove(column);
+                    } else {
+                        state.replaced.put(column, keep);
+                    }
+                    reloads.add(x);
+                    reloads.add(y);
+                    reloads.add(z);
                 }
                 if (state.floors.size() > 4 * (forgetBeyond * 2 + 1) * (forgetBeyond * 2 + 1)) {
                     state.floors.long2IntEntrySet().removeIf(e -> BuriedSectionPolicy.ring(
                             (int) (e.getLongKey() >> 32), (int) e.getLongKey(), pcx, pcz) > forgetBeyond);
                 }
             }
+            ChunkStore chunks = store.getExternalData().getWorld().getChunkStore();
             for (int i = 0; i < reloads.size(); i += 3) {
-                tracker.removeForReload(reloads.getInt(i), reloads.getInt(i + 1), reloads.getInt(i + 2));
+                int x = reloads.getInt(i);
+                int y = reloads.getInt(i + 1);
+                int z = reloads.getInt(i + 2);
+                boolean nearby = BuriedSectionPolicy.ring(x, z, pcx, pcz) <= near;
+                // A column the client already dropped must not get a bare section packet.
+                if (!nearby || !tracker.isLoaded(x, y, z) || !sendReal(playerRef, chunks, x, y, z)) {
+                    tracker.removeForReload(x, y, z);
+                }
             }
             RESTORED.add(reloads.size() / 3);
+        }
+
+        /** Writes the server's cached packets for a loaded section; false when it is not loaded. */
+        private boolean sendReal(PlayerRef playerRef, ChunkStore chunks, int x, int y, int z) {
+            Ref<ChunkStore> ref = chunks.getChunkSectionReference(x, y, z);
+            if (ref == null || !ref.isValid()) {
+                return false;
+            }
+            BlockSection blocks = chunks.getStore().getComponent(ref, BlockSection.getComponentType());
+            FluidSection fluids = chunks.getStore().getComponent(ref, FluidSection.getComponentType());
+            if (blocks == null || fluids == null) {
+                return false;
+            }
+            blocks.getCachedChunkPacket(x, y, z).thenAccept(packet -> write(playerRef, packet));
+            fluids.getCachedPacket().thenAccept(packet -> write(playerRef, packet));
+            return true;
         }
     }
 }

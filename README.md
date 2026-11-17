@@ -94,7 +94,7 @@ the only difference is what each version does at that view distance.
 
 | Component | Spec |
 | --- | --- |
-| CPU | AMD Ryzen 5 3600 |
+| CPU | AMD Ryzen 7 5700X |
 | GPU | NVIDIA GeForce GTX 1650 4GB |
 | RAM | 16 GB (2×8 GB) |
 

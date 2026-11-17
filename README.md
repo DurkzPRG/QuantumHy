@@ -230,14 +230,14 @@ same `ChunkTracker` or `Player` fields.
 | --- | --- |
 | Client view radius | **QuantumHy** when `leanCoreTakeover=true` (default). QuantumHy turns off LeanCore view governance on startup. |
 | Entity stream radius | **QuantumHy** |
-| Hot/simulation radius | **LeanCore** |
+| Hot/simulation radius | **QuantumHy** when `simulationDistanceEnabled=true` (default) and the takeover is confirmed. QuantumHy turns off LeanCore hot radius governance and gives it back on shutdown. Otherwise **LeanCore**. |
 | Chunk send rate (`maxChunks/s`, `maxChunks/tick`) | **QuantumHy** when `smoothChunkStreaming=true` (default) |
 | MSPT render trim (density, LOD, vertical, effects) | **QuantumHy** |
 | Spawn stream pause | **QuantumHy** |
 | Zone dormancy / memory | **LeanCore** |
 
 Defaults on both mods already line up: `leanCoreTakeover=true`, QuantumHy `smoothChunkStreaming=true`,
-LeanCore handling sim/memory. No extra LeanCore config required for a normal install.
+LeanCore handling memory and zone dormancy. No extra LeanCore config required for a normal install.
 
 **Knobs if you need them**
 

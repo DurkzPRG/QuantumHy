@@ -118,6 +118,26 @@ the only difference is what each version does at that view distance.
 1% low is the average of the slowest 1% of frames, the number that tells you how bad the stutters get.
 Frames over 50 ms are listed as without / 0.4.0 / 0.5.0.
 
+### CPU, memory and GPU
+
+Averages over the whole run, logged by CapFrameX every 250 ms on the same runs.
+
+| Whole run | Without QuantumHy | QuantumHy 0.4.0 | QuantumHy 0.5.0 |
+| --- | ---: | ---: | ---: |
+| Average FPS | 95 | 97 | **110** |
+| CPU load (whole PC) | 41.7% | 39.5% | **37.9%** |
+| CPU energy per frame | 650 mJ | 620 mJ | **566 mJ** |
+| Hytale client RAM | 6.41 GB | 6.46 GB | **5.09 GB** |
+| VRAM | 3.76 GB | 3.76 GB | **3.38 GB** |
+| GPU load | 76% | 78% | 86% |
+
+- CPU load covers the whole PC, so the client and the singleplayer server together. 0.5.0 drew
+  16% more frames on 9% less CPU, about 13% less CPU energy per frame.
+- The client used 1.3 GB less RAM and 0.4 GB less VRAM, mostly from not holding the buried
+  terrain.
+- GPU load went up because the GPU spends less time waiting on the CPU. That is where the extra
+  frames come from.
+
 ![FPS along the route](docs/benchmark/fps-timeline.png)
 
 ![Average FPS and 1% low per part](docs/benchmark/fps-summary.png)
